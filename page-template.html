@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reviewers</title>
+  <style>/* GitHub-lookalike styling for reviewers page */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+    Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2328;
+  background-color: #ffffff;
+  margin: 0;
+  padding: 0;
+}
+
+.container {
+  max-width: 1012px;
+  margin: 0 auto;
+  padding: 24px 32px;
+}
+
+.page-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid #d1d9e0;
+  margin-bottom: 16px;
+}
+
+.page-header h1 {
+  font-size: 24px;
+  font-weight: 400;
+  margin: 0 0 4px;
+}
+
+.page-header h1 #repo-name {
+  font-weight: 600;
+}
+
+.subtitle {
+  color: #656d76;
+  margin: 0;
+  font-size: 14px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.period-selector label {
+  color: #656d76;
+  margin-right: 4px;
+}
+
+.period-selector select {
+  font-size: 14px;
+  padding: 4px 8px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #1f2328;
+  cursor: pointer;
+}
+
+.summary {
+  color: #656d76;
+  font-size: 13px;
+}
+.overview-chart-container {
+  width: 100%;
+  height: 250px;
+  margin-bottom: 32px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.reviewers-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .reviewers-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.reviewer-card {
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.reviewer-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.reviewer-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid #d1d9e080;
+}
+
+.reviewer-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.reviewer-login {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0969da;
+  text-decoration: none;
+}
+
+.reviewer-login:hover {
+  text-decoration: underline;
+}
+
+.reviewer-stats {
+  font-size: 12px;
+  color: #656d76;
+  margin-top: 2px;
+}
+.reviewer-stats a {
+  color: inherit;
+  text-decoration: none;
+}
+.reviewer-stats a:hover {
+  text-decoration: underline;
+}
+
+.reviewer-rank {
+  font-size: 12px;
+  color: #656d76;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.reviewer-chart-container {
+  width: 100%;
+  height: 60px;
+  margin-top: 8px;
+}
+
+.show-more-container {
+  text-align: center;
+  margin-top: 24px;
+}
+
+.show-more-btn {
+  font-size: 14px;
+  padding: 8px 24px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #1f2328;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.show-more-btn:hover {
+  background: #eef1f4;
+}
+
+.page-footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid #d1d9e0;
+  color: #656d76;
+  font-size: 12px;
+  text-align: center;
+}
+</style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="page-header">
+      <h1 id="page-title">Reviewers of <span id="repo-name">...</span></h1>
+      <p class="subtitle">PR review, comment, and merge activity per month</p>
+    </header>
+
+    <div class="controls">
+      <div class="period-selector">
+        <label>Period:</label>
+        <select id="period-select">
+          <option value="all">All</option>
+          <option value="1">Last month</option>
+          <option value="3">Last 3 months</option>
+          <option value="6">Last 6 months</option>
+          <option value="12" selected>Last 12 months</option>
+          <option value="24">Last 24 months</option>
+        </select>
+      </div>
+      <div class="summary" id="summary"></div>
+    </div>
+
+    <div class="overview-chart-container">
+      <canvas id="overview-chart"></canvas>
+    </div>
+
+    <div class="reviewers-grid" id="reviewers-grid">
+    </div>
+
+    <footer class="page-footer">
+      <p>Generated <span id="generated-at"></span> by <a href="https://github.com/gh-tui-tools/gh-reviewers-graph">gh-reviewers-graph</a></p>
+    </footer>
+  </div>
+
+  <script>/* __DATA_JS__ */</script>
+  <script>/* Reviewers page — Chart.js rendering and DOM logic */
+
+(function () {
+  "use strict";
+
+  var CHART_COLOR = "rgb(31, 111, 200)";
+  var CHART_BG = "rgba(31, 111, 200, 0.15)";
+
+  var currentPeriod = "12";
+  var overviewChart = null;
+  var sparklineCharts = {};
+
+  // -- Helpers -------------------------------------------------------
+
+  function periodDateFilter(period) {
+    if (period === "all") return "";
+    var months = parseInt(period, 10);
+    if (!months) return "";
+    var now = new Date();
+    var y = now.getFullYear();
+    var m = now.getMonth() + 1 - months;
+    while (m < 1) { m += 12; y--; }
+    var maxDay = new Date(y, m, 0).getDate();
+    var d = Math.min(now.getDate(), maxDay);
+    return "+updated%3A>%3D" + y + "-" +
+      String(m).padStart(2, "0") + "-" +
+      String(d).padStart(2, "0");
+  }
+
+  function filterMonthlyByPeriod(monthly, period) {
+    if (period === "all") return monthly;
+
+    var months = parseInt(period, 10);
+    if (!months) return monthly;
+
+    var now = new Date();
+    var cutoff = new Date(now.getFullYear(), now.getMonth() - months, 1);
+
+    var cutoffStr =
+      cutoff.getFullYear() +
+      "-" +
+      String(cutoff.getMonth() + 1).padStart(2, "0");
+    var filtered = {};
+    for (var month in monthly) {
+      if (monthly.hasOwnProperty(month) && month >= cutoffStr) {
+        filtered[month] = monthly[month];
+      }
+    }
+    return filtered;
+  }
+
+  function buildDenseMonths(sparseMonthly) {
+    var months = Object.keys(sparseMonthly).sort();
+    if (months.length === 0) return { labels: [], values: [] };
+
+    var labels = [];
+    var values = [];
+
+    var parts = months[0].split("-");
+    var year = parseInt(parts[0], 10);
+    var month = parseInt(parts[1], 10);
+
+    var endParts = months[months.length - 1].split("-");
+    var endYear = parseInt(endParts[0], 10);
+    var endMonth = parseInt(endParts[1], 10);
+
+    while (year < endYear || (year === endYear && month <= endMonth)) {
+      var key = year + "-" + String(month).padStart(2, "0");
+      labels.push(key);
+      values.push(sparseMonthly[key] || 0);
+      month++;
+      if (month > 12) {
+        month = 1;
+        year++;
+      }
+    }
+
+    return { labels: labels, values: values };
+  }
+
+  function formatMonth(yearMonth) {
+    var parts = yearMonth.split("-");
+    var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
+    return d.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+    });
+  }
+
+  function formatDate(isoStr) {
+    var d = new Date(isoStr);
+    return d.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  function formatNumber(n) {
+    return String(n);
+  }
+
+  function mergeMonthly(a, b) {
+    var merged = {};
+    var key;
+    for (key in a) {
+      if (a.hasOwnProperty(key)) {
+        merged[key] = (merged[key] || 0) + a[key];
+      }
+    }
+    for (key in b) {
+      if (b.hasOwnProperty(key)) {
+        merged[key] = (merged[key] || 0) + b[key];
+      }
+    }
+    return merged;
+  }
+
+  function sumMonthly(monthly) {
+    var total = 0;
+    for (var key in monthly) {
+      if (monthly.hasOwnProperty(key)) total += monthly[key];
+    }
+    return total;
+  }
+
+  // -- Overview chart -------------------------------------------------
+
+  function renderOverviewChart() {
+    var reviewMonthly = filterMonthlyByPeriod(DATA.monthly_totals, currentPeriod);
+    var commentMonthly = filterMonthlyByPeriod(DATA.comment_monthly_totals || {}, currentPeriod);
+    var mergeMonthlyData = filterMonthlyByPeriod(DATA.merge_monthly_totals || {}, currentPeriod);
+    var combined = mergeMonthly(mergeMonthly(reviewMonthly, commentMonthly), mergeMonthlyData);
+    var dense = buildDenseMonths(combined);
+
+    var ctx = document.getElementById("overview-chart").getContext("2d");
+
+    if (overviewChart) {
+      overviewChart.destroy();
+    }
+
+    overviewChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: dense.labels,
+        datasets: [
+          {
+            data: dense.values,
+            borderColor: CHART_COLOR,
+            backgroundColor: CHART_BG,
+            borderWidth: 2,
+            fill: "origin",
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHoverBackgroundColor: CHART_COLOR,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                return formatMonth(items[0].label);
+              },
+              afterBody: function (items) {
+                var month = items[0].label;
+                var reviews = reviewMonthly[month] || 0;
+                var comments = commentMonthly[month] || 0;
+                var merges = mergeMonthlyData[month] || 0;
+                return formatNumber(reviews) + " reviewed, " + formatNumber(comments) + " commented on, " + formatNumber(merges) + " merged";
+              },
+              label: function (ctx) {
+                return formatNumber(ctx.parsed.y) + " total PR events";
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            display: true,
+            grid: { display: false },
+            ticks: {
+              maxTicksLimit: 12,
+              maxRotation: 0,
+              callback: function (val) {
+                return formatMonth(this.getLabelForValue(val));
+              },
+            },
+          },
+          y: {
+            display: true,
+            beginAtZero: true,
+            grid: { color: "rgba(0, 0, 0, 0.06)" },
+            border: { display: false },
+            ticks: { maxTicksLimit: 5 },
+          },
+        },
+        layout: { padding: { top: 4, right: 4, bottom: 0, left: 0 } },
+      },
+    });
+  }
+
+  // -- Sparkline chart ------------------------------------------------
+
+  function createSparkline(canvasId, sparseMonthly) {
+    var monthly = filterMonthlyByPeriod(sparseMonthly, currentPeriod);
+    var dense = buildDenseMonths(monthly);
+
+    var ctx = document.getElementById(canvasId).getContext("2d");
+
+    return new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: dense.labels,
+        datasets: [
+          {
+            data: dense.values,
+            borderColor: CHART_COLOR,
+            backgroundColor: CHART_BG,
+            borderWidth: 1.5,
+            fill: "origin",
+            tension: 0.3,
+            pointRadius: 0,
+            pointHitRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: false },
+        },
+        scales: {
+          x: { display: false },
+          y: { display: false, beginAtZero: true },
+        },
+        layout: { padding: 0 },
+      },
+    });
+  }
+
+  // -- Reviewer cards -------------------------------------------------
+
+  function createReviewerCard(reviewer, index, rank, filteredTotal, filteredComments, filteredMerges) {
+    var card = document.createElement("div");
+    card.className = "reviewer-card";
+
+    var canvasId = "spark-" + index;
+
+    card.innerHTML =
+      '<div class="reviewer-header">' +
+      '<img class="reviewer-avatar" src="' +
+      reviewer.avatar_url +
+      '" alt="' +
+      reviewer.login +
+      '" loading="lazy">' +
+      '<div class="reviewer-info">' +
+      '<a class="reviewer-login" href="' +
+      reviewer.html_url +
+      '">' +
+      reviewer.login +
+      "</a>" +
+      '<div class="reviewer-stats">' +
+      '<a href="https://github.com/' + DATA.repo + '/pulls?q=is%3Apr+reviewed-by%3A' + reviewer.login + '+-author%3A' + reviewer.login + periodDateFilter(currentPeriod) + '">' +
+      formatNumber(filteredTotal) +
+      " PRs reviewed</a> | " +
+      '<a href="https://github.com/' + DATA.repo + '/pulls?q=is%3Apr+commenter%3A' + reviewer.login + '+-author%3A' + reviewer.login + periodDateFilter(currentPeriod) + '">' +
+      formatNumber(filteredComments) +
+      " commented on</a> | " +
+      formatNumber(filteredMerges) +
+      " merged</div>" +
+      "</div>" +
+      '<span class="reviewer-rank">#' + rank + "</span>" +
+      "</div>" +
+      '<div class="reviewer-chart-container">' +
+      '<canvas id="' +
+      canvasId +
+      '"></canvas>' +
+      "</div>";
+
+    return { card: card, canvasId: canvasId };
+  }
+
+  function renderReviewerCards() {
+    var grid = document.getElementById("reviewers-grid");
+    grid.innerHTML = "";
+
+    // Destroy old sparklines
+    for (var id in sparklineCharts) {
+      if (sparklineCharts.hasOwnProperty(id)) {
+        sparklineCharts[id].destroy();
+      }
+    }
+    sparklineCharts = {};
+
+    var entries = DATA.reviewers.map(function (reviewer) {
+      var pc = reviewer.period_counts && currentPeriod !== "all" && reviewer.period_counts[currentPeriod];
+      var filteredTotal = pc ? pc.reviewed
+        : currentPeriod === "all" ? reviewer.total
+        : sumMonthly(filterMonthlyByPeriod(reviewer.monthly, currentPeriod));
+      var filteredComments = pc ? pc.commented
+        : currentPeriod === "all" ? reviewer.total_comments
+        : sumMonthly(filterMonthlyByPeriod(reviewer.comment_monthly || {}, currentPeriod));
+      var filteredMerges = sumMonthly(
+        filterMonthlyByPeriod(reviewer.merge_monthly || {}, currentPeriod));
+      return {
+        reviewer: reviewer,
+        filteredTotal: filteredTotal,
+        filteredComments: filteredComments,
+        filteredMerges: filteredMerges,
+        combined: filteredTotal + filteredComments + filteredMerges,
+      };
+    });
+
+    entries = entries.filter(function (e) { return e.combined > 0; });
+    entries.sort(function (a, b) { return b.combined - a.combined; });
+
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      var result = createReviewerCard(e.reviewer, i, String(i + 1), e.filteredTotal, e.filteredComments, e.filteredMerges);
+      grid.appendChild(result.card);
+      sparklineCharts[result.canvasId] = createSparkline(
+        result.canvasId,
+        e.reviewer.monthly
+      );
+    }
+  }
+
+  // -- Init -----------------------------------------------------------
+
+  function updateSummary() {
+    var activeCount = 0;
+    for (var i = 0; i < DATA.reviewers.length; i++) {
+      var r = DATA.reviewers[i];
+      var pc = r.period_counts && currentPeriod !== "all" && r.period_counts[currentPeriod];
+      var rev = pc ? pc.reviewed
+        : currentPeriod === "all" ? r.total
+        : sumMonthly(filterMonthlyByPeriod(r.monthly, currentPeriod));
+      var com = pc ? pc.commented
+        : currentPeriod === "all" ? r.total_comments
+        : sumMonthly(filterMonthlyByPeriod(r.comment_monthly || {}, currentPeriod));
+      var mer = sumMonthly(filterMonthlyByPeriod(r.merge_monthly || {}, currentPeriod));
+      if (rev + com + mer > 0) activeCount++;
+    }
+    var t = ((DATA.repo_totals || {})[currentPeriod]) || {};
+    document.getElementById("summary").textContent =
+      formatNumber(activeCount) +
+      " reviewers \u00b7 " +
+      formatNumber(t.reviewed || 0) +
+      " PRs reviewed \u00b7 " +
+      formatNumber(t.commented || 0) +
+      " PRs commented on \u00b7 " +
+      formatNumber(t.merged || 0) +
+      " PRs merged";
+  }
+
+  function init() {
+    document.getElementById("repo-name").textContent = DATA.repo;
+    document.title = "Reviewers of " + DATA.repo;
+    document.getElementById("generated-at").textContent = formatDate(
+      DATA.generated_at
+    );
+
+    updateSummary();
+    renderOverviewChart();
+    renderReviewerCards();
+
+    document.getElementById("period-select").addEventListener("change", function (e) {
+      currentPeriod = e.target.value;
+      updateSummary();
+      renderOverviewChart();
+      renderReviewerCards();
+    });
+
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

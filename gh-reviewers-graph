@@ -1,0 +1,1652 @@
+#!/usr/bin/env python3
+"""Generate a GitHub Contributors-style page for PR reviewers."""
+
+import argparse
+import calendar
+import json
+import os
+import random
+import re
+import signal
+import sys
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+import webbrowser
+from datetime import datetime, timezone
+
+# Force-exit on Ctrl-C so ThreadPoolExecutor workers don't keep the process alive.
+signal.signal(signal.SIGINT, lambda *_: os._exit(130))
+
+
+class Colors:
+    """ANSI color codes for terminal output."""
+
+    ENABLED = sys.stderr.isatty() and os.environ.get("NO_COLOR") is None
+
+    RESET = "\033[0m" if ENABLED else ""
+    BOLD = "\033[1m" if ENABLED else ""
+    DIM = "\033[2m" if ENABLED else ""
+
+    RED = "\033[31m" if ENABLED else ""
+    GREEN = "\033[32m" if ENABLED else ""
+    YELLOW = "\033[33m" if ENABLED else ""
+    BLUE = "\033[34m" if ENABLED else ""
+    MAGENTA = "\033[35m" if ENABLED else ""
+    CYAN = "\033[36m" if ENABLED else ""
+
+
+class ProgressIndicator:
+    """Animated progress indicator for long-running operations."""
+
+    SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self):
+        self._status = ""
+        self._running = False
+        self._thread = None
+        self._spinner_idx = 0
+
+    def _animate(self):
+        while self._running:
+            spinner = self.SPINNER[self._spinner_idx % len(self.SPINNER)]
+            colored_spinner = f"{Colors.CYAN}{spinner}{Colors.RESET}"
+            sys.stderr.write(f"\r\033[K{colored_spinner} {self._status}")
+            sys.stderr.flush()
+            self._spinner_idx += 1
+            time.sleep(0.1)
+
+    def start(self, status=""):
+        self._status = status
+        self._running = True
+        self._thread = threading.Thread(target=self._animate, daemon=True)
+        self._thread.start()
+
+    def update(self, status):
+        self._status = status
+
+    def stop(self, final_message=None):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.2)
+        sys.stderr.write("\r\033[K")
+        if final_message:
+            sys.stderr.write(f"{final_message}\n")  # pragma: no cover
+        sys.stderr.flush()
+
+    @contextmanager
+    def running(self, message):  # pragma: no cover
+        """Context manager for progress indicator to prevent leaks."""
+        self.start(message)
+        try:
+            yield
+        finally:
+            self.stop()
+
+
+progress = ProgressIndicator()
+
+
+def get_rate_limit_info():
+    """Query GitHub’s REST API for current GraphQL rate limit status.
+
+    Returns (remaining, reset_dt) or (None, None) on failure.
+    Uses the REST endpoint which does not count against GraphQL quota.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "api", "rate_limit", "--jq", ".resources.graphql"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        info = json.loads(result.stdout)
+        remaining = info["remaining"]
+        reset_ts = info["reset"]
+        reset_dt = datetime.fromtimestamp(reset_ts, tz=timezone.utc)
+        return remaining, reset_dt
+    except (
+        subprocess.CalledProcessError,
+        OSError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
+        return None, None
+
+
+def estimate_api_calls(n_months, n_logins):
+    """Estimate total GraphQL API calls for a fresh (non-cached) fetch.
+
+    Based on the batch sizes and query patterns used by each fetch phase.
+    """
+    from math import ceil
+
+    repo_start_and_activity = 2
+    discover_phase1 = n_months  # scan_month per month
+    n_candidates = min(n_months * 3, 600)  # rough candidate estimate
+    discover_phase2 = ceil(n_candidates * 2 / 25)  # review + comment aliases
+    avatars = ceil(n_logins / 15)
+    monthly_counts = ceil(
+        2 * n_logins * n_months / 25
+    )  # review + comment per login*month
+    merge_counts = n_months  # one search per month
+    period_counts = ceil(2 * n_logins * 5 / 25)  # 5 periods, review + comment
+    return (
+        repo_start_and_activity
+        + discover_phase1
+        + discover_phase2
+        + avatars
+        + monthly_counts
+        + merge_counts
+        + period_counts
+    )
+
+
+def estimate_incremental_calls(n_reviewers, n_stale_months, n_total_months):
+    """Estimate API calls for an incremental update.
+
+    Uses n_stale_months for the monthly_counts and merge_counts terms
+    (sealed months are skipped), but period_counts still covers all reviewers.
+    """
+    from math import ceil
+
+    activity_check = 1
+    discover_phase1 = n_total_months
+    n_candidates = min(n_total_months * 3, 600)
+    discover_phase2 = ceil(n_candidates * 2 / 25)
+    monthly_counts = ceil(2 * n_reviewers * n_stale_months / 25)
+    merge_counts = n_stale_months
+    period_counts = ceil(2 * n_reviewers * 5 / 25)
+    return (
+        activity_check
+        + discover_phase1
+        + discover_phase2
+        + monthly_counts
+        + merge_counts
+        + period_counts
+    )
+
+
+def check_rate_limit_budget(estimated_calls):
+    """Print a rate limit budget summary if rate limit info is available.
+
+    Shows remaining quota vs estimated calls. Warns if estimated exceeds
+    remaining but does NOT abort — the countdown mechanism handles waits.
+    """
+    remaining, reset_dt = get_rate_limit_info()
+    if remaining is None:
+        return
+
+    reset_time = reset_dt.astimezone().strftime("%H:%M")
+    pct = int(estimated_calls / remaining * 100) if remaining > 0 else 999
+    print(f"Rate limit: {remaining:,} of 5,000 remaining (resets at {reset_time})")
+    print(f"Estimated API calls: ~{estimated_calls:,} ({pct}% of remaining)")
+
+    if estimated_calls > remaining:
+        print(
+            f"  Warning: Estimated ~{estimated_calls:,} calls exceeds "
+            f"{remaining:,} remaining.\n"
+            f"  Rate limit resets at {reset_time}. The tool will pause with "
+            f"a countdown if the limit is hit during execution."
+        )
+
+
+MERGE_SEARCH_QUERY = """
+query($q: String!, $cursor: String) {
+  rateLimit { remaining resetAt }
+  search(query: $q, type: ISSUE, first: 100, after: $cursor) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      ... on PullRequest {
+        createdAt
+        author { login }
+        mergedBy { login }
+      }
+    }
+  }
+}
+"""
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(SCRIPT_DIR, "page-template.html")
+
+
+_rate_limit_lock = threading.Lock()
+_rate_limit_reset_target = None
+
+
+def _wait_for_rate_limit_reset():
+    """Wait for the GitHub GraphQL rate limit to reset with a countdown.
+
+    Thread-safe: only the first thread to hit the limit queries the actual
+    reset time; subsequent threads reuse the cached target. If the reset
+    is within 60 minutes, shows a countdown via progress.update() in 15s
+    chunks. Falls back to a 60s sleep if info is unavailable or reset is
+    too far away.
+    """
+    global _rate_limit_reset_target
+    max_wait = 60 * 60  # 60 minutes
+
+    with _rate_limit_lock:
+        now = datetime.now(timezone.utc)
+        if _rate_limit_reset_target and _rate_limit_reset_target > now:
+            target = _rate_limit_reset_target
+        else:
+            remaining, reset_dt = get_rate_limit_info()
+            if reset_dt and (reset_dt - now).total_seconds() <= max_wait:
+                target = reset_dt
+                _rate_limit_reset_target = target
+            else:
+                # Unknown or too far away: fallback
+                progress.update("Rate limited. Waiting 60s...")
+                time.sleep(60)
+                return
+            _rate_limit_reset_target = target
+
+    # Countdown loop (outside lock so other threads can also enter)
+    while True:
+        now = datetime.now(timezone.utc)
+        remaining_secs = (target - now).total_seconds()
+        if remaining_secs <= 0:
+            break
+        reset_time = target.astimezone().strftime("%H:%M")
+        mins, secs = divmod(int(remaining_secs), 60)
+        progress.update(
+            f"Rate limit reached \u2014 resets at {reset_time} "
+            f"({mins}m {secs:02d}s remaining)"
+        )
+        time.sleep(min(15, remaining_secs))
+
+
+def _graphql_request(query, variables=None, allow_partial=False):
+    """Execute a GraphQL request with rate limit and retry handling."""
+    retries = 0
+    while True:
+        cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
+        for key, value in (variables or {}).items():
+            if value is not None:
+                cmd += ["-f", f"{key}={value}"]
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            # When allow_partial is set, gh may exit non-zero due to
+            # partial GraphQL errors (e.g. deleted users) while stdout
+            # still contains valid data for the other aliases.
+            if allow_partial and e.stdout:
+                try:
+                    partial = json.loads(e.stdout)
+                except json.JSONDecodeError:
+                    partial = {}
+                if "data" in partial:
+                    return partial["data"]
+            stderr = e.stderr.lower()
+            if "rate limit" in stderr or "HTTP 403" in e.stderr:
+                _wait_for_rate_limit_reset()
+                continue
+            if any(code in e.stderr for code in ("HTTP 502", "HTTP 503", "HTTP 504")):
+                if retries < 5:
+                    retries += 1
+                    wait = min(2**retries, 30)
+                    progress.update(f"Server error. Retry {retries}/5 in {wait}s...")
+                    time.sleep(wait)
+                    continue
+            raise RuntimeError(f"gh api graphql failed: {e.stderr}")
+        except OSError:
+            if retries < 5:
+                retries += 1
+                wait = min(2**retries, 30)
+                progress.update(f"Connection error. Retry {retries}/5 in {wait}s...")
+                time.sleep(wait)
+                continue
+            raise
+        data = json.loads(result.stdout)
+        if "errors" in data and not (allow_partial and "data" in data):
+            if any("rate limit" in str(e).lower() for e in data["errors"]):
+                _wait_for_rate_limit_reset()
+                continue
+            raise RuntimeError(f"GraphQL error: {data['errors']}")
+
+        # Proactive rate limit check: pause before exhausting budget
+        rate_limit = data.get("data", {}).get("rateLimit", {})
+        remaining = rate_limit.get("remaining")
+        if remaining is not None and remaining < 50:
+            _wait_for_rate_limit_reset()
+
+        return data["data"]
+
+
+KNOWN_BOTS = frozenset(
+    {
+        "bors-servo",
+        "highfive",
+        "servo-wpt-sync",
+        "webkit-commit-queue",
+        "webkit-early-warning-system",
+    }
+)
+
+
+def is_bot(login):
+    """Check if a login appears to be a bot account."""
+    lower = login.lower()
+    return lower.endswith("bot") or lower.endswith("[bot]") or lower in KNOWN_BOTS
+
+
+def discover_reviewers(owner, name, top_n, start_month=None, exclude=frozenset()):
+    """Two-phase reviewer discovery using only lightweight flat-field queries.
+
+    Phase 1: Collect candidate logins from PR authors and mergers across all
+    months via parallel flat-field search (same pattern as fetch_merge_counts).
+    Also counts merge frequency per login.
+
+    Phase 2: Rank candidates by review + comment activity using batched
+    count-only aliases (same pattern as fetch_monthly_counts).
+
+    Final ranking combines Phase 2 search counts with Phase 1 merge frequency.
+    This ensures unsearchable users (where search API returns 0 for
+    reviewed-by/commenter) are still included if they merge many PRs.
+
+    Both phases use query patterns proven to avoid secondary rate limits.
+    Returns top_n logins from combined ranking.
+    """
+    if start_month is None:
+        start_month = fetch_repo_start(owner, name)
+
+    now = datetime.now(timezone.utc)
+    end_month = f"{now.year:04d}-{now.month:02d}"
+    month_ranges = generate_month_ranges(start_month, end_month)
+    total_months = len(month_ranges)
+    repo = f"{owner}/{name}"
+
+    # -- Phase 1: Collect candidate logins from flat-field PR data --
+    candidates = set()
+    merge_counts = Counter()
+    lock = threading.Lock()
+    completed = [0]
+    total_sampled = [0]
+
+    candidate_workers = min(MAX_WORKERS, 10)
+    progress.start(
+        f"Discovering reviewers — scanning {total_months} months "
+        f"for candidates ({candidate_workers} workers)..."
+    )
+
+    def scan_month(label, start_date, end_date):
+        q = f"repo:{repo} is:pr created:{start_date}..{end_date}"
+        data = _graphql_request(MERGE_SEARCH_QUERY, {"q": q})
+        local = set()
+        local_merges = Counter()
+        pr_count = 0
+        for pr in data["search"]["nodes"]:
+            pr_count += 1
+            author = pr.get("author")
+            if (
+                author
+                and author.get("login")
+                and not is_bot(author["login"])
+                and author["login"].lower() not in exclude
+            ):
+                local.add(author["login"])
+            merged_by = pr.get("mergedBy")
+            if (
+                merged_by
+                and merged_by.get("login")
+                and not is_bot(merged_by["login"])
+                and merged_by["login"].lower() not in exclude
+            ):
+                local.add(merged_by["login"])
+                local_merges[merged_by["login"]] += 1
+        with lock:
+            candidates.update(local)
+            merge_counts.update(local_merges)
+            total_sampled[0] += pr_count
+            completed[0] += 1
+            done = completed[0]
+        if done % 10 == 0 or done == total_months:
+            progress.update(
+                f"{done}/{total_months} months ({len(candidates)} candidates)"
+            )
+
+    with ThreadPoolExecutor(max_workers=candidate_workers) as executor:
+        futures = [executor.submit(scan_month, *mr) for mr in month_ranges]
+        for future in as_completed(futures):
+            future.result()
+
+    progress.update(f"Found {len(candidates)} candidates from {total_sampled[0]} PRs")
+
+    if not candidates:
+        return []
+
+    # -- Phase 2: Count review + comment activity per candidate --
+    tasks = []
+    for login in sorted(candidates):
+        tasks.append((login, f"repo:{repo} is:pr reviewed-by:{login} -author:{login}"))
+        tasks.append((login, f"repo:{repo} is:pr commenter:{login} -author:{login}"))
+
+    combined = Counter()
+    batch_size = 25
+    total_batches = (len(tasks) + batch_size - 1) // batch_size
+
+    batches = []
+    for i in range(0, len(tasks), batch_size):
+        batch = tasks[i : i + batch_size]
+        aliases = []
+        alias_map = {}
+        for j, (login, search_q) in enumerate(batch):
+            alias_name = f"q{j}"
+            alias_map[alias_name] = login
+            aliases.append(
+                f'{alias_name}: search(query: "{search_q}", '
+                f"type: ISSUE, first: 0) {{ issueCount }}"
+            )
+        query = (
+            "query {\n  rateLimit { remaining resetAt }\n  "
+            + "\n  ".join(aliases)
+            + "\n}"
+        )
+        batches.append((query, alias_map))
+
+    progress.update(
+        f"Ranking {len(candidates)} candidates "
+        f"({len(tasks)} queries in {total_batches} batches)..."
+    )
+
+    count_completed = [0]
+
+    def run_count_batch(batch_idx):
+        query, alias_map = batches[batch_idx]
+        data = _graphql_request(query)
+        local = Counter()
+        for alias_name, login in alias_map.items():
+            count = data[alias_name]["issueCount"]
+            if count > 0:
+                local[login] += count
+        remaining = data.get("rateLimit", {}).get("remaining", "?")
+        with lock:
+            combined.update(local)
+            count_completed[0] += 1
+            done = count_completed[0]
+        if done % 10 == 0 or done == total_batches:
+            progress.update(
+                f"{done}/{total_batches} count batches done (rate limit: {remaining})"
+            )
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [
+            executor.submit(run_count_batch, idx) for idx in range(total_batches)
+        ]
+        for future in as_completed(futures):
+            future.result()
+
+    # Fold in merge frequency from Phase 1 so that prolific mergers who are
+    # "unsearchable" (search API returns 0 for reviewed-by/commenter) still
+    # rank highly enough to be included in the top N.
+    combined.update(merge_counts)
+    top = combined.most_common(top_n)
+    progress.stop()
+    print(
+        f"Discovered {len(combined)} active reviewers/commenters/mergers, keeping top {len(top)}"
+    )
+    return [login for login, _ in top]
+
+
+def fetch_avatars(logins):
+    """Fetch avatar URLs for a list of logins via batched GraphQL queries."""
+    avatars = {}
+    batch_size = 15
+
+    for i in range(0, len(logins), batch_size):
+        batch = logins[i : i + batch_size]
+        aliases = []
+        for login in batch:
+            safe = "u_" + login.replace("-", "_").replace(".", "_")
+            aliases.append(f'{safe}: user(login: "{login}") {{ avatarUrl login }}')
+        query = (
+            "query {\n  rateLimit { remaining resetAt }\n  "
+            + "\n  ".join(aliases)
+            + "\n}"
+        )
+        data = _graphql_request(query, allow_partial=True)
+        for login in batch:
+            safe = "u_" + login.replace("-", "_").replace(".", "_")
+            user_data = data.get(safe)
+            if user_data:
+                avatars[login] = user_data["avatarUrl"]
+            else:
+                avatars[login] = f"https://github.com/{login}.png"
+
+    return avatars
+
+
+def fetch_repo_start(owner, name):
+    """Get the repository creation month as YYYY-MM."""
+    query = """
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) { createdAt }
+    }
+    """
+    data = _graphql_request(query, {"owner": owner, "name": name})
+    created = data["repository"]["createdAt"]
+    return created[:7]  # "YYYY-MM"
+
+
+def fetch_repo_activity(owner, name):
+    """Fetch repo activity signals and repo-wide PR counts in a single API call.
+
+    Includes per-period counts (all, 1, 3, 6, 12, 24 months) for reviewed,
+    commented, and merged PRs — 18 search aliases total, all in one request.
+    """
+    repo_slug = f"{owner}/{name}"
+    now = datetime.now(timezone.utc)
+
+    def _months_ago(n):
+        y, m, d = now.year, now.month - n, now.day
+        while m < 1:
+            m += 12
+            y -= 1
+        # Clamp day to last day of target month
+        max_day = calendar.monthrange(y, m)[1]
+        if d > max_day:
+            d = max_day
+        return f"{y:04d}-{m:02d}-{d:02d}"
+
+    periods = [
+        ("all", ""),
+        ("1", f" updated:>={_months_ago(1)}"),
+        ("3", f" updated:>={_months_ago(3)}"),
+        ("6", f" updated:>={_months_ago(6)}"),
+        ("12", f" updated:>={_months_ago(12)}"),
+        ("24", f" updated:>={_months_ago(24)}"),
+    ]
+
+    search_aliases = []
+    for key, date_filter in periods:
+        search_aliases.append(
+            f'reviewed_{key}: search(query: "repo:{repo_slug} is:pr'
+            f' -review:none{date_filter}", type: ISSUE, first: 0)'
+            " { issueCount }"
+        )
+        search_aliases.append(
+            f'commented_{key}: search(query: "repo:{repo_slug} is:pr'
+            f' comments:>=1{date_filter}", type: ISSUE, first: 0)'
+            " { issueCount }"
+        )
+        search_aliases.append(
+            f'merged_{key}: search(query: "repo:{repo_slug} is:pr'
+            f' is:merged{date_filter}", type: ISSUE, first: 0)'
+            " { issueCount }"
+        )
+
+    query = (
+        "query($owner: String!, $name: String!) {\n"
+        "  rateLimit { remaining resetAt }\n"
+        "  repository(owner: $owner, name: $name) {\n"
+        "    pullRequests(first: 1, orderBy: {field: UPDATED_AT, direction: DESC}) {\n"
+        "      totalCount\n"
+        "      nodes { updatedAt }\n"
+        "    }\n"
+        "    mergedPRs: pullRequests(states: [MERGED]) { totalCount }\n"
+        "  }\n  " + "\n  ".join(search_aliases) + "\n}"
+    )
+    data = _graphql_request(query, {"owner": owner, "name": name})
+    repo_data = data["repository"]
+    pr_conn = repo_data["pullRequests"]
+    nodes = pr_conn["nodes"]
+    last_updated = nodes[0]["updatedAt"] if nodes else None
+
+    repo_totals = {}
+    for key, _ in periods:
+        repo_totals[key] = {
+            "reviewed": data[f"reviewed_{key}"]["issueCount"],
+            "commented": data[f"commented_{key}"]["issueCount"],
+            "merged": data[f"merged_{key}"]["issueCount"],
+        }
+
+    return {
+        "last_pr_updated_at": last_updated,
+        "total_pr_count": pr_conn["totalCount"],
+        "total_merged_prs": repo_data["mergedPRs"]["totalCount"],
+        "total_reviewed_prs": repo_totals["all"]["reviewed"],
+        "total_commented_prs": repo_totals["all"]["commented"],
+        "repo_totals": repo_totals,
+    }
+
+
+def fetch_merge_counts(owner, name, logins, month_ranges):
+    """Fetch per-login per-month merge counts using search-based parallel pagination.
+
+    Uses the search API with date-range splitting to paginate each month
+    independently in parallel. For each merged PR, extracts mergedBy.login
+    and createdAt. Only counts merges for logins in the provided set, and
+    skips self-merges. Returns {login: {month_label: count}}.
+    """
+    repo = f"{owner}/{name}"
+    login_set = set(logins)
+    results = {login: {} for login in logins}
+    lock = threading.Lock()
+    completed = [0]
+    total_months = len(month_ranges)
+
+    merge_workers = min(MAX_WORKERS, 10)
+    progress.update(
+        f"Fetching merge counts ({total_months} months, {merge_workers} workers)..."
+    )
+
+    def scan_month(label, start_date, end_date):
+        q = f"repo:{repo} is:pr is:merged created:{start_date}..{end_date}"
+        partial = {}
+        cursor = None
+        page_count = 0
+
+        while True:
+            data = _graphql_request(
+                MERGE_SEARCH_QUERY,
+                {
+                    "q": q,
+                    "cursor": cursor,
+                },
+            )
+            search = data["search"]
+            page_count += 1
+
+            for pr in search["nodes"]:
+                merged_by = pr.get("mergedBy")
+                if merged_by is None:
+                    continue
+                login = merged_by.get("login")
+                if login is None or login not in login_set:
+                    continue
+                author = pr.get("author")
+                if author and author.get("login") == login:
+                    continue
+                month = pr["createdAt"][:7]
+                key = (login, month)
+                partial[key] = partial.get(key, 0) + 1
+
+            if not search["pageInfo"]["hasNextPage"]:
+                break
+            cursor = search["pageInfo"]["endCursor"]
+            if page_count >= 10:
+                progress.update(
+                    f"Warning: month {label} has 1000+ merged PRs, results may be truncated"
+                )
+                break
+
+        with lock:
+            for (login, month), count in partial.items():
+                results[login][month] = results[login].get(month, 0) + count
+            completed[0] += 1
+            done = completed[0]
+        if done % 10 == 0 or done == total_months:
+            progress.update(f"{done}/{total_months} months scanned")
+
+    with ThreadPoolExecutor(max_workers=merge_workers) as executor:
+        futures = [
+            executor.submit(scan_month, label, start, end)
+            for label, start, end in month_ranges
+        ]
+        for future in as_completed(futures):
+            future.result()
+
+    return results
+
+
+def generate_month_ranges(start_month, end_month):
+    """Generate (label, start_date, end_date) tuples for each month in range.
+
+    start_month and end_month are "YYYY-MM" strings.
+    Returns list of ("2024-01", "2024-01-01", "2024-01-31") tuples.
+    """
+    ranges = []
+    year, month = map(int, start_month.split("-"))
+    end_year, end_mon = map(int, end_month.split("-"))
+
+    while (year, month) <= (end_year, end_mon):
+        label = f"{year:04d}-{month:02d}"
+        first_day = f"{year:04d}-{month:02d}-01"
+        last_day_num = calendar.monthrange(year, month)[1]
+        last_day = f"{year:04d}-{month:02d}-{last_day_num:02d}"
+        ranges.append((label, first_day, last_day))
+
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+
+    return ranges
+
+
+MAX_WORKERS = int(os.environ.get("GH_REVIEWERS_MAX_WORKERS", 30))
+SCRAPE_MAX_RPS = 4
+
+
+def fetch_monthly_counts(owner, name, logins, month_ranges):
+    """Fetch PR review and comment counts per login per month using search aliases.
+
+    Generates both reviewed-by and commenter queries for each (login, month)
+    pair, packs up to 25 search aliases per GraphQL request, then dispatches
+    batches across MAX_WORKERS threads for concurrent execution.
+
+    Returns (review_results, comment_results) — two dicts of
+    {login: {month_label: count}}.
+    """
+    # Build all (login, month_label, search_query, kind) tuples
+    tasks = []
+    repo = f"{owner}/{name}"
+    for login in logins:
+        for label, start_date, end_date in month_ranges:
+            review_q = (
+                f"repo:{repo} is:pr reviewed-by:{login} -author:{login} "
+                f"created:{start_date}..{end_date}"
+            )
+            tasks.append((login, label, review_q, "review"))
+            comment_q = (
+                f"repo:{repo} is:pr commenter:{login} -author:{login} "
+                f"created:{start_date}..{end_date}"
+            )
+            tasks.append((login, label, comment_q, "comment"))
+
+    review_results = {login: {} for login in logins}
+    comment_results = {login: {} for login in logins}
+    batch_size = 25
+    total_batches = (len(tasks) + batch_size - 1) // batch_size
+
+    # Pre-build all batch work items
+    batches = []
+    for i in range(0, len(tasks), batch_size):
+        batch = tasks[i : i + batch_size]
+        aliases = []
+        alias_map = {}
+        for j, (login, label, search_q, kind) in enumerate(batch):
+            alias_name = f"q{j}"
+            alias_map[alias_name] = (login, label, kind)
+            aliases.append(
+                f'{alias_name}: search(query: "{search_q}", '
+                f"type: ISSUE, first: 0) {{ issueCount }}"
+            )
+        query = (
+            "query {\n  rateLimit { remaining resetAt }\n  "
+            + "\n  ".join(aliases)
+            + "\n}"
+        )
+        batches.append((query, alias_map))
+
+    progress.update(
+        f"Fetching monthly counts ({len(tasks)} queries in "
+        f"{total_batches} batches, {MAX_WORKERS} workers)..."
+    )
+
+    def run_batch(batch_idx):
+        query, alias_map = batches[batch_idx]
+        data = _graphql_request(query)
+        partial = {}
+        for alias_name, (login, label, kind) in alias_map.items():
+            count = data[alias_name]["issueCount"]
+            if count > 0:
+                partial[(login, label, kind)] = count
+        remaining = data.get("rateLimit", {}).get("remaining", "?")
+        return batch_idx, partial, remaining
+
+    lock = threading.Lock()
+    completed = [0]
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(run_batch, idx): idx for idx in range(total_batches)}
+        for future in as_completed(futures):
+            batch_idx, partial, remaining = future.result()
+            with lock:
+                for (login, label, kind), count in partial.items():
+                    if kind == "review":
+                        review_results[login][label] = count
+                    else:
+                        comment_results[login][label] = count
+                completed[0] += 1
+                done = completed[0]
+            if done % 20 == 0 or done == total_batches:
+                progress.update(
+                    f"{done}/{total_batches} batches done "
+                    f"(rate limit remaining: {remaining})"
+                )
+
+    return review_results, comment_results
+
+
+class _ScrapeRateLimiter:
+    """Throttle concurrent scrape requests to a target rate."""
+
+    def __init__(self, max_rps):
+        self._min_interval = 1.0 / max_rps
+        self._lock = threading.Lock()
+        self._next_time = 0.0
+
+    def wait(self):
+        """Block until the next request is allowed."""
+        with self._lock:
+            now = time.monotonic()
+            if now < self._next_time:
+                time.sleep(self._next_time - now)
+            self._next_time = time.monotonic() + self._min_interval
+
+
+def _scrape_search_count(url, max_retries=3):
+    """Scrape a GitHub pull request search page and return total count.
+
+    Parses "N Open" and "N Closed" from the HTML and returns their sum.
+    Returns 0 on network errors or if counts cannot be parsed.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15)",
+            "Accept": "text/html",
+        },
+    )
+    for attempt in range(max_retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+
+            open_match = re.search(r"(\d[\d,]*)\s+Open", html)
+            closed_match = re.search(r"(\d[\d,]*)\s+Closed", html)
+
+            open_count = int(open_match.group(1).replace(",", "")) if open_match else 0
+            closed_count = (
+                int(closed_match.group(1).replace(",", "")) if closed_match else 0
+            )
+
+            return open_count + closed_count
+
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < max_retries:
+                retry_after = int(e.headers.get("Retry-After", 10))
+                wait_time = min(retry_after, 60)
+                jitter = random.uniform(0, min(wait_time, 5))
+                total_wait = wait_time + jitter
+                progress.update(
+                    f"HTTP 429 — retrying in {total_wait:.0f}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(total_wait)
+                continue
+            return 0
+        except (urllib.error.URLError, OSError):
+            return 0
+
+
+def _scrape_fallback_period_counts(owner, name, logins, results, periods):
+    """Scrape GitHub search pages to fill period counts for unsearchable users.
+
+    Uses early-exit gating: scrapes the broadest period ("24") first for all
+    users.  Users with zero reviewed AND zero commented in 24 months get all
+    shorter periods set to 0 without further scraping.  Only users that pass
+    the gate get the remaining 4 periods scraped.
+    """
+    repo = f"{owner}/{name}"
+    rate_limiter = _ScrapeRateLimiter(SCRAPE_MAX_RPS)
+
+    def _build_url(login, date_filter):
+        """Build reviewed + commented scrape URLs for one (login, period)."""
+        urls = {}
+        for kind, qualifier in [
+            ("reviewed", "reviewed-by"),
+            ("commented", "commenter"),
+        ]:
+            query = f"is:pr {qualifier}:{login} -author:{login}"
+            if date_filter:
+                query += date_filter
+            urls[kind] = (
+                f"https://github.com/{repo}/pulls?q={urllib.parse.quote_plus(query)}"
+            )
+        return urls
+
+    def _scrape_task(login, period_key, kind, url, counter, total):
+        rate_limiter.wait()
+        count = _scrape_search_count(url)
+        with counter[1]:
+            counter[0][0] += 1
+            done = counter[0][0]
+        if done % 50 == 0 or done == total:
+            progress.update(f"{done}/{total} pages scraped")
+        return login, period_key, kind, count
+
+    # Find the broadest period ("24") to use as the gate.
+    gate_period = periods[-1]  # ("24", " updated:>=...")
+    remaining_periods = periods[:-1]  # ("1", ...), ("3", ...), ... ("12", ...)
+
+    # -- Gate phase: scrape "24" for all users --
+    gate_tasks = []
+    for login in logins:
+        urls = _build_url(login, gate_period[1])
+        for kind, url in urls.items():
+            gate_tasks.append((login, gate_period[0], kind, url))
+
+    gate_total = len(gate_tasks)
+    progress.start(
+        f"Scraping {gate_total} gate pages ({len(logins)} users, "
+        f"period {gate_period[0]}mo, {SCRAPE_MAX_RPS} req/s)..."
+    )
+    counter = [[0], threading.Lock()]
+    workers = min(10, gate_total)
+    gate_results = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(_scrape_task, *t, counter, gate_total) for t in gate_tasks
+        ]
+        for future in as_completed(futures):
+            login, period_key, kind, count = future.result()
+            if login not in gate_results:
+                gate_results[login] = {"reviewed": 0, "commented": 0}
+            gate_results[login][kind] = count
+
+    # Store gate results and determine who passes.
+    passed = []
+    for login in logins:
+        gr = gate_results.get(login, {"reviewed": 0, "commented": 0})
+        if gate_period[0] not in results[login]:
+            results[login][gate_period[0]] = {"reviewed": 0, "commented": 0}
+        results[login][gate_period[0]] = dict(gr)
+        if gr["reviewed"] > 0 or gr["commented"] > 0:
+            passed.append(login)
+        else:
+            # Zero for 24 months means zero for all shorter periods too.
+            for key, _ in remaining_periods:
+                if key not in results[login]:
+                    results[login][key] = {"reviewed": 0, "commented": 0}
+
+    skipped = len(logins) - len(passed)
+    if skipped:
+        progress.update(
+            f"{skipped} users have zero activity in {gate_period[0]}mo — skipping"
+        )
+
+    if not passed:
+        progress.stop()
+        return
+
+    # -- Detail phase: scrape remaining periods for users that passed --
+    detail_tasks = []
+    for login in passed:
+        for key, date_filter in remaining_periods:
+            urls = _build_url(login, date_filter)
+            for kind, url in urls.items():
+                detail_tasks.append((login, key, kind, url))
+
+    detail_total = len(detail_tasks)
+    progress.start(
+        f"Scraping {detail_total} detail pages ({len(passed)} users, "
+        f"{SCRAPE_MAX_RPS} req/s)..."
+    )
+    counter = [[0], threading.Lock()]
+    workers = min(10, detail_total)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [
+            executor.submit(_scrape_task, *t, counter, detail_total)
+            for t in detail_tasks
+        ]
+        for future in as_completed(futures):
+            login, period_key, kind, count = future.result()
+            if period_key not in results[login]:
+                results[login][period_key] = {"reviewed": 0, "commented": 0}
+            results[login][period_key][kind] = count
+
+    progress.stop()
+
+
+def _build_period_date_filters():
+    """Build period key + date filter pairs for period-count queries."""
+    now = datetime.now(timezone.utc)
+
+    def _months_ago(n):
+        y, m, d = now.year, now.month - n, now.day
+        while m < 1:
+            m += 12
+            y -= 1
+        max_day = calendar.monthrange(y, m)[1]
+        if d > max_day:
+            d = max_day
+        return f"{y:04d}-{m:02d}-{d:02d}"
+
+    return [
+        ("1", f" updated:>={_months_ago(1)}"),
+        ("3", f" updated:>={_months_ago(3)}"),
+        ("6", f" updated:>={_months_ago(6)}"),
+        ("12", f" updated:>={_months_ago(12)}"),
+        ("24", f" updated:>={_months_ago(24)}"),
+    ]
+
+
+def fetch_reviewer_period_counts(owner, name, logins):
+    """Fetch per-reviewer per-period review and comment counts using updated:-based search.
+
+    Unlike fetch_monthly_counts which uses created: date ranges for monthly
+    bucketing, this uses updated:>= qualifiers that match the hyperlinks shown
+    in reviewer cards.  Returns {login: {period: {"reviewed": N, "commented": N}}}.
+    """
+    repo = f"{owner}/{name}"
+    periods = _build_period_date_filters()
+
+    tasks = []
+    for login in logins:
+        for key, date_filter in periods:
+            tasks.append(
+                (
+                    login,
+                    key,
+                    f"repo:{repo} is:pr reviewed-by:{login}"
+                    f" -author:{login}{date_filter}",
+                    "reviewed",
+                )
+            )
+            tasks.append(
+                (
+                    login,
+                    key,
+                    f"repo:{repo} is:pr commenter:{login} -author:{login}{date_filter}",
+                    "commented",
+                )
+            )
+
+    results = {login: {} for login in logins}
+    batch_size = 25
+    total_batches = (len(tasks) + batch_size - 1) // batch_size
+
+    batches = []
+    for i in range(0, len(tasks), batch_size):
+        batch = tasks[i : i + batch_size]
+        aliases = []
+        alias_map = {}
+        for j, (login, period_key, search_q, kind) in enumerate(batch):
+            alias_name = f"q{j}"
+            alias_map[alias_name] = (login, period_key, kind)
+            aliases.append(
+                f'{alias_name}: search(query: "{search_q}", '
+                f"type: ISSUE, first: 0) {{ issueCount }}"
+            )
+        query = (
+            "query {\n  rateLimit { remaining resetAt }\n  "
+            + "\n  ".join(aliases)
+            + "\n}"
+        )
+        batches.append((query, alias_map))
+
+    progress.update(
+        f"Fetching reviewer period counts ({len(tasks)} queries in "
+        f"{total_batches} batches, {MAX_WORKERS} workers)..."
+    )
+
+    def run_batch(batch_idx):
+        query, alias_map = batches[batch_idx]
+        data = _graphql_request(query)
+        partial = {}
+        for alias_name, (login, period_key, kind) in alias_map.items():
+            count = data[alias_name]["issueCount"]
+            partial[(login, period_key, kind)] = count
+        remaining = data.get("rateLimit", {}).get("remaining", "?")
+        return batch_idx, partial, remaining
+
+    lock = threading.Lock()
+    completed = [0]
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(run_batch, idx): idx for idx in range(total_batches)}
+        for future in as_completed(futures):
+            batch_idx, partial, remaining = future.result()
+            with lock:
+                for (login, period_key, kind), count in partial.items():
+                    if period_key not in results[login]:
+                        results[login][period_key] = {"reviewed": 0, "commented": 0}
+                    results[login][period_key][kind] = count
+                completed[0] += 1
+                done = completed[0]
+            if done % 20 == 0 or done == total_batches:
+                progress.update(
+                    f"{done}/{total_batches} batches done "
+                    f"(rate limit remaining: {remaining})"
+                )
+
+    return results
+
+
+def scrape_unsearchable_period_counts(owner, name, period_counts, reviewers_data):
+    """Scrape period counts for unsearchable users who have monthly activity.
+
+    Only scrapes users who (a) got all-zero GraphQL results AND (b) have
+    nonzero monthly/comment/merge data (will appear in output).  Mutates
+    period_counts in-place.
+    """
+    unsearchable = [
+        login
+        for login in period_counts
+        if period_counts[login]
+        and all(
+            pc["reviewed"] == 0 and pc["commented"] == 0
+            for pc in period_counts[login].values()
+        )
+    ]
+    if not unsearchable:
+        return
+
+    active_unsearchable = [
+        login
+        for login in unsearchable
+        if login in reviewers_data
+        and (
+            sum(reviewers_data[login].get("monthly", {}).values())
+            + sum(reviewers_data[login].get("comment_monthly", {}).values())
+            + sum(reviewers_data[login].get("merge_monthly", {}).values())
+            > 0
+        )
+    ]
+
+    if not active_unsearchable:
+        progress.update(
+            f"{len(unsearchable)} unsearchable users detected, "
+            f"but none have monthly activity — skipping scrape"
+        )
+        return
+
+    progress.update(
+        f"{len(active_unsearchable)} of {len(unsearchable)} unsearchable users "
+        f"have monthly activity — scraping..."
+    )
+    periods = _build_period_date_filters()
+    _scrape_fallback_period_counts(
+        owner, name, active_unsearchable, period_counts, periods
+    )
+
+
+def build_output_data(repo, cached_reviewers, reviewer_period_counts=None):
+    """Build the output data model from cached reviewer data.
+
+    cached_reviewers: {login: {"avatar_url": str, "monthly": {...},
+                                "comment_monthly": {...},
+                                "merge_monthly": {...}}}
+    """
+    reviewers = []
+    monthly_totals = {}
+    comment_monthly_totals = {}
+    merge_monthly_totals = {}
+
+    for login, info in cached_reviewers.items():
+        monthly = info.get("monthly", {})
+        comment_monthly = info.get("comment_monthly", {})
+        merge_monthly = info.get("merge_monthly", {})
+        total = sum(monthly.values())
+        total_comments = sum(comment_monthly.values())
+        total_merges = sum(merge_monthly.values())
+        if total == 0 and total_comments == 0 and total_merges == 0:
+            continue
+        reviewers.append(
+            {
+                "login": login,
+                "avatar_url": info.get("avatar_url", f"https://github.com/{login}.png"),
+                "html_url": f"https://github.com/{login}",
+                "total": total,
+                "total_comments": total_comments,
+                "total_merges": total_merges,
+                "monthly": dict(sorted(monthly.items())),
+                "comment_monthly": dict(sorted(comment_monthly.items())),
+                "merge_monthly": dict(sorted(merge_monthly.items())),
+            }
+        )
+        if reviewer_period_counts and login in reviewer_period_counts:
+            reviewers[-1]["period_counts"] = reviewer_period_counts[login]
+            # For unsearchable users, monthly/comment_monthly are empty (search
+            # API returns 0).  Use the broadest scraped period ("24") as a proxy
+            # for all-time totals so the "All" period view shows real counts.
+            pc24 = reviewer_period_counts[login].get("24", {})
+            if total == 0 and pc24.get("reviewed", 0) > 0:
+                reviewers[-1]["total"] = pc24["reviewed"]
+            if total_comments == 0 and pc24.get("commented", 0) > 0:
+                reviewers[-1]["total_comments"] = pc24["commented"]
+        for month, count in monthly.items():
+            monthly_totals[month] = monthly_totals.get(month, 0) + count
+        for month, count in comment_monthly.items():
+            comment_monthly_totals[month] = comment_monthly_totals.get(month, 0) + count
+        for month, count in merge_monthly.items():
+            merge_monthly_totals[month] = merge_monthly_totals.get(month, 0) + count
+
+    reviewers.sort(
+        key=lambda r: r["total"] + r["total_comments"] + r["total_merges"], reverse=True
+    )
+    monthly_totals = dict(sorted(monthly_totals.items()))
+    comment_monthly_totals = dict(sorted(comment_monthly_totals.items()))
+    merge_monthly_totals = dict(sorted(merge_monthly_totals.items()))
+
+    return {
+        "repo": repo,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "reviewers": reviewers,
+        "monthly_totals": monthly_totals,
+        "comment_monthly_totals": comment_monthly_totals,
+        "merge_monthly_totals": merge_monthly_totals,
+    }
+
+
+def save_cache(cache_path, data):
+    """Save data to a JSON cache file, creating parent directories."""
+    parent = os.path.dirname(cache_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(cache_path, "w") as f:
+        json.dump(data, f)
+
+
+def load_cache(cache_path):
+    """Load data from a JSON cache file. Returns None if file missing."""
+    try:
+        with open(cache_path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def generate_output(data, output_dir):
+    """Generate a self-contained index.html with inlined CSS, JS, and data."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    with open(TEMPLATE_PATH) as f:
+        html = f.read()
+
+    data_js = "const DATA = " + json.dumps(data, indent=2) + ";"
+    html = html.replace("/* __DATA_JS__ */", data_js)
+
+    with open(os.path.join(output_dir, "index.html"), "w") as f:
+        f.write(html)
+
+    progress.stop()
+    print(f"Output written to {output_dir}/index.html")
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Generate a reviewers page for a GitHub repository"
+    )
+    parser.add_argument(
+        "repo",
+        help="Repository in OWNER/REPO format (e.g., mdn/content)",
+    )
+    parser.add_argument(
+        "--output",
+        default="./repos",
+        help="Base reports directory (default: ./repos)",
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force re-fetch, ignoring cache",
+    )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=100,
+        help="Number of top reviewers to include (default: 100)",
+    )
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Don't open the output in a browser",
+    )
+    parser.add_argument(
+        "--exclude",
+        default="",
+        help="Comma-separated logins to exclude (e.g., bot1,bot2)",
+    )
+    args = parser.parse_args(argv)
+
+    if "/" not in args.repo:
+        parser.error("Repository must be in OWNER/REPO format")
+
+    args.owner, args.name = args.repo.split("/", 1)
+    return args
+
+
+def _prev_month(ym):
+    """Return the YYYY-MM string for the month before ym."""
+    year, month = map(int, ym.split("-"))
+    month -= 1
+    if month < 1:
+        month = 12
+        year -= 1
+    return f"{year:04d}-{month:02d}"
+
+
+def incremental_update(cached, owner, name, top, exclude=frozenset()):
+    """Incrementally update a v8 cache, re-fetching only stale months.
+
+    Uses a 3-tier activity check to skip expensive work when the repo
+    is dormant:
+      Tier 1: last_pr_updated_at unchanged → full skip (~60 calls saved)
+      Tier 2: total_pr_count unchanged → skip reviewer discovery (~50 calls saved)
+      Tier 3: total_merged_prs unchanged → skip merge count re-fetch (~1-2 calls saved)
+    """
+    now = datetime.now(timezone.utc)
+    current_month = f"{now.year:04d}-{now.month:02d}"
+    start_month = cached["start_month"]
+    old_end = cached["end_month"]
+
+    # Activity check (1 API call)
+    progress.start("Checking for recent activity...")
+    activity = fetch_repo_activity(owner, name)
+    cached_activity = cached.get("activity")
+
+    # Tier 1: full skip — nothing changed at all
+    # Primary signal: last_pr_updated_at unchanged (no PR touched at all).
+    # Fallback signal: repo_totals["all"] unchanged (review/comment/merge
+    # counts identical even though some PR was touched by CI, bots, etc.).
+    if cached_activity is not None:
+        primary_unchanged = (
+            activity["last_pr_updated_at"] == cached_activity["last_pr_updated_at"]
+        )
+        cached_totals = cached_activity.get("repo_totals", {}).get("all")
+        fallback_unchanged = (
+            cached_totals is not None
+            and activity["repo_totals"]["all"] == cached_totals
+        )
+        if primary_unchanged or fallback_unchanged:
+            progress.stop()
+            print("Activity unchanged, skipping update")
+            return {
+                "version": 8,
+                "start_month": start_month,
+                "end_month": current_month,
+                "reviewers": cached["reviewers"],
+                "activity": activity,
+                "reviewer_period_counts": cached.get("reviewer_period_counts", {}),
+            }
+
+    # Tier 2 & 3: determine what can be skipped
+    skip_discovery = (
+        cached_activity is not None
+        and activity["total_pr_count"] == cached_activity["total_pr_count"]
+    )
+    skip_merges = (
+        cached_activity is not None
+        and activity["total_merged_prs"] == cached_activity["total_merged_prs"]
+    )
+
+    # Phase 1: discover or reuse reviewers
+    if skip_discovery:
+        progress.update("PR count unchanged, reusing cached reviewer list")
+        discovered = list(cached["reviewers"].keys())
+        new_logins = []
+    else:
+        discovered = discover_reviewers(owner, name, top, start_month, exclude=exclude)
+        cached_logins = set(cached["reviewers"].keys())
+        new_logins = [login for login in discovered if login not in cached_logins]
+    discovered_set = set(discovered)
+    cached_logins = set(cached["reviewers"].keys())
+
+    # Phase 2: compute stale months (old end_month was in-progress + any new months)
+    stale_ranges = generate_month_ranges(old_end, current_month)
+
+    # Phase 3: compute historical month ranges for new reviewers
+    historical_ranges = []
+    prev = _prev_month(old_end)
+    if new_logins and (int(start_month.replace("-", "")) <= int(prev.replace("-", ""))):
+        historical_ranges = generate_month_ranges(start_month, prev)
+
+    # Budget check before expensive concurrent fetch
+    all_ranges = generate_month_ranges(start_month, current_month)
+    estimated = estimate_incremental_calls(
+        len(discovered), len(stale_ranges), len(all_ranges)
+    )
+    check_rate_limit_budget(estimated)
+
+    # Phase 4: concurrent fetch
+    progress.start(
+        f"Incremental update: {len(stale_ranges)} stale months, "
+        f"{len(new_logins)} new reviewers, "
+        f"{len(historical_ranges)} historical months"
+        + (", skipping merge re-fetch" if skip_merges else "")
+    )
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {}
+        futures["stale_monthly"] = executor.submit(
+            fetch_monthly_counts, owner, name, discovered, stale_ranges
+        )
+        futures["period_counts"] = executor.submit(
+            fetch_reviewer_period_counts, owner, name, discovered
+        )
+        if not skip_merges:
+            futures["stale_merge"] = executor.submit(
+                fetch_merge_counts, owner, name, discovered, stale_ranges
+            )
+        if new_logins:
+            futures["new_avatars"] = executor.submit(fetch_avatars, new_logins)
+            if historical_ranges:
+                futures["hist_monthly"] = executor.submit(
+                    fetch_monthly_counts, owner, name, new_logins, historical_ranges
+                )
+                if not skip_merges:
+                    futures["hist_merge"] = executor.submit(
+                        fetch_merge_counts, owner, name, new_logins, historical_ranges
+                    )
+
+        stale_reviews, stale_comments = futures["stale_monthly"].result()
+        stale_merges = (
+            futures["stale_merge"].result() if "stale_merge" in futures else {}
+        )
+        new_avatars = (
+            futures["new_avatars"].result() if "new_avatars" in futures else {}
+        )
+        if "hist_monthly" in futures:
+            hist_reviews, hist_comments = futures["hist_monthly"].result()
+        else:
+            hist_reviews, hist_comments = {}, {}
+        hist_merges = futures["hist_merge"].result() if "hist_merge" in futures else {}
+        period_counts = futures["period_counts"].result()
+
+    # Phase 5: merge into cache
+    stale_labels = {label for label, _, _ in stale_ranges}
+    merged_reviewers = {}
+
+    for login in discovered:
+        if login in cached_logins:
+            # Existing reviewer: keep sealed months, replace stale months
+            old_data = cached["reviewers"][login]
+            monthly = {
+                m: c
+                for m, c in old_data.get("monthly", {}).items()
+                if m not in stale_labels
+            }
+            comment_monthly = {
+                m: c
+                for m, c in old_data.get("comment_monthly", {}).items()
+                if m not in stale_labels
+            }
+            if skip_merges:
+                merge_monthly = dict(old_data.get("merge_monthly", {}))
+            else:
+                merge_monthly = {
+                    m: c
+                    for m, c in old_data.get("merge_monthly", {}).items()
+                    if m not in stale_labels
+                }
+                merge_monthly.update(stale_merges.get(login, {}))
+            monthly.update(stale_reviews.get(login, {}))
+            comment_monthly.update(stale_comments.get(login, {}))
+            merged_reviewers[login] = {
+                "avatar_url": old_data.get(
+                    "avatar_url", f"https://github.com/{login}.png"
+                ),
+                "monthly": monthly,
+                "comment_monthly": comment_monthly,
+                "merge_monthly": merge_monthly,
+            }
+        else:
+            # New reviewer: combine historical + stale data
+            monthly = {}
+            monthly.update(hist_reviews.get(login, {}))
+            monthly.update(stale_reviews.get(login, {}))
+            comment_monthly = {}
+            comment_monthly.update(hist_comments.get(login, {}))
+            comment_monthly.update(stale_comments.get(login, {}))
+            merge_monthly = {}
+            merge_monthly.update(hist_merges.get(login, {}))
+            merge_monthly.update(stale_merges.get(login, {}))
+            merged_reviewers[login] = {
+                "avatar_url": new_avatars.get(login, f"https://github.com/{login}.png"),
+                "monthly": monthly,
+                "comment_monthly": comment_monthly,
+                "merge_monthly": merge_monthly,
+            }
+
+    # Cached-but-not-rediscovered reviewers: keep as-is (frozen historical data)
+    for login, data in cached["reviewers"].items():
+        if login not in discovered_set:
+            merged_reviewers[login] = data
+
+    # Scrape period counts for unsearchable users who appear in output
+    scrape_unsearchable_period_counts(owner, name, period_counts, merged_reviewers)
+
+    return {
+        "version": 8,
+        "start_month": start_month,
+        "end_month": current_month,
+        "reviewers": merged_reviewers,
+        "activity": activity,
+        "reviewer_period_counts": period_counts,
+    }
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    exclude = frozenset(
+        login.strip().lower() for login in args.exclude.split(",") if login.strip()
+    )
+    repo = f"{args.owner}/{args.name}"
+    repo_dir = os.path.join(args.output, args.owner, args.name)
+    cache_path = os.path.join(repo_dir, "data.json")
+
+    # Check cache (v8 format)
+    cached = None
+    if not args.refresh:
+        cached = load_cache(cache_path)
+        if cached:
+            if cached.get("version") != 8:
+                print(f"Stale cache format at {cache_path}, re-fetching...")
+                cached = None
+            else:
+                print(f"Using cached data from {cache_path}")
+
+    if cached is not None:
+        # Incremental update path
+        cached = incremental_update(
+            cached, args.owner, args.name, args.top, exclude=exclude
+        )
+        save_cache(cache_path, cached)
+        progress.stop()
+        print(f"Updated cache at {cache_path}")
+
+    else:
+        # Phase 1: determine date range and discover top reviewers
+        start_month = fetch_repo_start(args.owner, args.name)
+        logins = discover_reviewers(
+            args.owner, args.name, args.top, start_month, exclude=exclude
+        )
+
+        # Phase 2: determine month ranges
+        now = datetime.now(timezone.utc)
+        end_month = f"{now.year:04d}-{now.month:02d}"
+        month_ranges = generate_month_ranges(start_month, end_month)
+        print(f"Date range: {start_month} to {end_month} ({len(month_ranges)} months)")
+
+        estimated = estimate_api_calls(len(month_ranges), len(logins))
+        check_rate_limit_budget(estimated)
+
+        # Phase 3: fetch avatars, monthly counts, merge counts, and period counts
+        print(
+            f"Fetching data for {len(logins)} reviewers across "
+            f"{len(month_ranges)} months (~{estimated:,} API calls)..."
+        )
+        progress.start("Starting concurrent fetch...")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            avatar_future = executor.submit(fetch_avatars, logins)
+            monthly_future = executor.submit(
+                fetch_monthly_counts, args.owner, args.name, logins, month_ranges
+            )
+            merge_future = executor.submit(
+                fetch_merge_counts, args.owner, args.name, logins, month_ranges
+            )
+            period_counts_future = executor.submit(
+                fetch_reviewer_period_counts, args.owner, args.name, logins
+            )
+
+            avatars = avatar_future.result()
+            monthly_counts, comment_counts = monthly_future.result()
+            merge_counts = merge_future.result()
+            period_counts = period_counts_future.result()
+
+        # Build cache
+        reviewers = {}
+        for login in logins:
+            reviewers[login] = {
+                "avatar_url": avatars.get(login, f"https://github.com/{login}.png"),
+                "monthly": monthly_counts.get(login, {}),
+                "comment_monthly": comment_counts.get(login, {}),
+                "merge_monthly": merge_counts.get(login, {}),
+            }
+
+        # Scrape period counts for unsearchable users who appear in output
+        scrape_unsearchable_period_counts(
+            args.owner, args.name, period_counts, reviewers
+        )
+
+        activity = fetch_repo_activity(args.owner, args.name)
+
+        cached = {
+            "version": 8,
+            "start_month": start_month,
+            "end_month": end_month,
+            "reviewers": reviewers,
+            "activity": activity,
+            "reviewer_period_counts": period_counts,
+        }
+        save_cache(cache_path, cached)
+        progress.stop()
+        print(f"Cached data to {cache_path}")
+
+    # Build output data
+    data = build_output_data(
+        repo, cached["reviewers"], cached.get("reviewer_period_counts")
+    )
+    data["repo_totals"] = cached.get("activity", {}).get("repo_totals", {})
+
+    # Generate output
+    generate_output(data, repo_dir)
+
+    # Open in browser
+    output_path = os.path.join(repo_dir, "index.html")
+    if not args.no_open:
+        webbrowser.open("file://" + os.path.abspath(output_path))
+
+    # Summary
+    n_reviewers = len(data["reviewers"])
+    total = sum(r["total"] for r in data["reviewers"])
+    total_comments = sum(r["total_comments"] for r in data["reviewers"])
+    total_merges = sum(r["total_merges"] for r in data["reviewers"])
+    print(f"Generated reviewers page for {repo}")
+    print(
+        f"  {n_reviewers} reviewers, {total} total PRs reviewed, "
+        f"{total_comments} total PRs commented on, "
+        f"{total_merges} total PRs merged"
+    )
+
+
+if __name__ == "__main__":
+    main()

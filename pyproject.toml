@@ -1,0 +1,38 @@
+[project]
+name = "gh-reviewers-graph"
+version = "0.1.0"
+description = "Generate a GitHub Contributors-style page for PR reviewers"
+requires-python = ">=3.10"
+
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-playwright>=0.4.0",
+    "jsonschema>=4.0",
+]
+lint = [
+    "ruff>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--cov=.",
+    "--cov-report=term-missing:skip-covered",
+    "--ignore=tests/e2e",
+]
+markers = [
+    "e2e: end-to-end browser tests (require playwright)",
+]
+
+[tool.coverage.run]
+source = ["gh-reviewers-graph"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 99
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]

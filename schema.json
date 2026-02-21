@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/gh-tui-tools/gh-reviewers-graph/schema.json",
+  "title": "gh-reviewers-graph data.json",
+  "description": "Cached reviewer activity data for a GitHub repository, produced by gh-reviewers-graph.",
+  "type": "object",
+  "required": ["version", "start_month", "end_month", "reviewers", "activity", "reviewer_period_counts"],
+  "additionalProperties": false,
+  "properties": {
+    "version":  { "type": "integer", "description": "Cache format version.", "const": 8 },
+    "start_month": { "$ref": "#/$defs/yearMonth" },
+    "end_month":   { "$ref": "#/$defs/yearMonth" },
+    "reviewers":   {
+      "type": "object",
+      "description": "Reviewer data keyed by GitHub login.",
+      "additionalProperties": { "$ref": "#/$defs/reviewer" }
+    },
+    "activity": { "$ref": "#/$defs/activity" },
+    "reviewer_period_counts": {
+      "type": "object",
+      "description": "Per-reviewer counts for each time period, keyed by GitHub login.",
+      "additionalProperties": { "$ref": "#/$defs/periodCounts" }
+    }
+  },
+
+  "$defs": {
+
+    "yearMonth": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}$",
+      "description": "Year and month in YYYY-MM format.",
+      "examples": ["2020-09", "2026-02"]
+    },
+
+    "monthlyMap": {
+      "type": "object",
+      "description": "Maps YYYY-MM strings to integer counts.",
+      "propertyNames": { "$ref": "#/$defs/yearMonth" },
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+
+    "reviewer": {
+      "type": "object",
+      "required": ["avatar_url", "monthly", "comment_monthly", "merge_monthly"],
+      "additionalProperties": false,
+      "properties": {
+        "avatar_url":      {
+          "type": "string",
+          "format": "uri",
+          "description": "GitHub avatar URL."
+        },
+        "monthly":         {
+          "$ref": "#/$defs/monthlyMap",
+          "description": "PRs reviewed per month (excluding self-authored)."
+        },
+        "comment_monthly": {
+          "$ref": "#/$defs/monthlyMap",
+          "description": "PRs commented on per month (excluding self-authored)."
+        },
+        "merge_monthly":   {
+          "$ref": "#/$defs/monthlyMap",
+          "description": "PRs merged per month (excluding self-authored)."
+        }
+      }
+    },
+
+    "activity": {
+      "type": "object",
+      "description": "Repository-level activity snapshot used for incremental cache staleness checks.",
+      "required": [
+        "last_pr_updated_at",
+        "total_pr_count",
+        "total_merged_prs",
+        "total_reviewed_prs",
+        "total_commented_prs",
+        "repo_totals"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "last_pr_updated_at": {
+          "type": "string",
+          "description": "ISO 8601 timestamp of the most recently updated PR.",
+          "examples": ["2026-02-24T07:13:19Z"]
+        },
+        "total_pr_count":      { "type": "integer", "minimum": 0, "description": "Total number of PRs in the repository." },
+        "total_merged_prs":    { "type": "integer", "minimum": 0, "description": "Total number of merged PRs." },
+        "total_reviewed_prs":  { "type": "integer", "minimum": 0, "description": "Total number of PRs with at least one review." },
+        "total_commented_prs": { "type": "integer", "minimum": 0, "description": "Total number of PRs with at least one comment." },
+        "repo_totals": {
+          "type": "object",
+          "description": "Aggregate review/comment/merge counts per time period. Used as a Tier 1 fallback staleness signal.",
+          "required": ["all"],
+          "propertyNames": { "enum": ["all", "1", "3", "6", "12", "24"] },
+          "additionalProperties": { "$ref": "#/$defs/periodTotal" }
+        }
+      }
+    },
+
+    "periodTotal": {
+      "type": "object",
+      "description": "Aggregate counts for a single time period across all reviewers.",
+      "required": ["reviewed", "commented", "merged"],
+      "additionalProperties": false,
+      "properties": {
+        "reviewed":  { "type": "integer", "minimum": 0, "description": "Unique PRs reviewed." },
+        "commented": { "type": "integer", "minimum": 0, "description": "Unique PRs commented on." },
+        "merged":    { "type": "integer", "minimum": 0, "description": "Unique PRs merged." }
+      }
+    },
+
+    "periodCounts": {
+      "type": "object",
+      "description": "Per-reviewer review and comment counts for each time period.",
+      "propertyNames": { "enum": ["1", "3", "6", "12", "24"] },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["reviewed", "commented"],
+        "additionalProperties": false,
+        "properties": {
+          "reviewed":  { "type": "integer", "minimum": 0 },
+          "commented": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

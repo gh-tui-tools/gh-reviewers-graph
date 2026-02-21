@@ -1,0 +1,88 @@
+name: Update pages
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch cached data from gh-pages
+        run: |
+          git fetch origin gh-pages:gh-pages 2>/dev/null || true
+          if git rev-parse --verify gh-pages >/dev/null 2>&1; then
+            mkdir -p repos
+            git --work-tree=repos checkout gh-pages -- .
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Update each repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REVIEWERS_MAX_WORKERS: "1"
+        run: |
+          for dir in repos/*/*/; do
+            repo="${dir#repos/}"
+            repo="${repo%/}"
+            [ -z "$repo" ] && continue
+            echo "::group::$repo"
+            ./gh-reviewers-graph --no-open "$repo"
+            echo "::endgroup::"
+            sleep 5
+          done
+
+      - name: Generate index page
+        run: |
+          cat > repos/index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Reviewer Reports</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; color: #24292f; }
+            h1 { border-bottom: 1px solid #d0d7de; padding-bottom: 8px; }
+            ul { list-style: none; padding: 0; }
+            li { padding: 8px 0; border-bottom: 1px solid #d0d7de; }
+            a { color: #0969da; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+          </style>
+          </head>
+          <body>
+          <h1>Reviewer Reports</h1>
+          <ul>
+          HTMLEOF
+          for dir in repos/*/*/; do
+            repo="${dir#repos/}"
+            repo="${repo%/}"
+            [ -z "$repo" ] && continue
+            echo "<li><a href=\"${repo}/\">${repo}</a></li>" >> repos/index.html
+          done
+          cat >> repos/index.html << 'HTMLEOF'
+          </ul>
+          </body>
+          </html>
+          HTMLEOF
+
+      - name: Deploy to gh-pages
+        run: |
+          cd repos
+          touch .nojekyll
+          git init
+          git checkout -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Update reports $(date -u +%Y-%m-%d)"
+          git push --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
