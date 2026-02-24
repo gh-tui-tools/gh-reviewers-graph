@@ -607,6 +607,7 @@ The summary line above the overview chart shows: `N reviewers — N PRs reviewed
 - Full card width, 60px height
 - No animation, no tooltips, no axes
 - Same color scheme as overview, 1.5px border
+- Data source: combined reviews + comments + merges (same as overview chart), so unsearchable users with merge-only data still get a visible chart
 
 ### Dense month generation
 

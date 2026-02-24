@@ -558,9 +558,13 @@ body {
       var e = entries[i];
       var result = createReviewerCard(e.reviewer, i, String(i + 1), e.filteredTotal, e.filteredComments, e.filteredMerges);
       grid.appendChild(result.card);
+      var sparkMonthly = mergeMonthly(
+        mergeMonthly(e.reviewer.monthly, e.reviewer.comment_monthly || {}),
+        e.reviewer.merge_monthly || {}
+      );
       sparklineCharts[result.canvasId] = createSparkline(
         result.canvasId,
-        e.reviewer.monthly
+        sparkMonthly
       );
     }
   }
