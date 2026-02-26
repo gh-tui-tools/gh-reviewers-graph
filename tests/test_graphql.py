@@ -101,6 +101,25 @@ class TestGraphqlRequest:
             reviewers._graphql_request("query { }")
         assert mock_run.call_count == 6
 
+    def test_network_timeout_retries(self, mock_run, mock_sleep, mock_rl):
+        mock_run.side_effect = [
+            _error(
+                'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: i/o timeout'
+            ),
+            _success({"data": {"ok": True}}),
+        ]
+        result = reviewers._graphql_request("query { }")
+        assert result == {"ok": True}
+        assert mock_run.call_count == 2
+
+    def test_network_timeout_exhausted(self, mock_run, mock_sleep, mock_rl):
+        mock_run.side_effect = _error(
+            'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: i/o timeout'
+        )
+        with pytest.raises(RuntimeError, match="gh api graphql failed"):
+            reviewers._graphql_request("query { }")
+        assert mock_run.call_count == 6
+
     def test_proactive_rate_limit_pause(self, mock_run, mock_sleep, mock_rl):
         mock_run.return_value = _success(
             {

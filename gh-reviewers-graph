@@ -304,6 +304,13 @@ def _graphql_request(query, variables=None, allow_partial=False):
                     progress.update(f"Server error. Retry {retries}/5 in {wait}s...")
                     time.sleep(wait)
                     continue
+            if "timeout" in stderr or "dial tcp" in stderr:
+                if retries < 5:
+                    retries += 1
+                    wait = min(2**retries, 30)
+                    progress.update(f"Network timeout. Retry {retries}/5 in {wait}s...")
+                    time.sleep(wait)
+                    continue
             raise RuntimeError(f"gh api graphql failed: {e.stderr}")
         except OSError:
             if retries < 5:
