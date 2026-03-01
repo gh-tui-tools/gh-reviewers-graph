@@ -1,0 +1,4525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reviewers</title>
+  <style>/* GitHub-lookalike styling for reviewers page */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+    Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2328;
+  background-color: #ffffff;
+  margin: 0;
+  padding: 0;
+}
+
+.container {
+  max-width: 1012px;
+  margin: 0 auto;
+  padding: 24px 32px;
+}
+
+.page-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid #d1d9e0;
+  margin-bottom: 16px;
+}
+
+.page-header h1 {
+  font-size: 24px;
+  font-weight: 400;
+  margin: 0 0 4px;
+}
+
+.page-header h1 #repo-name {
+  font-weight: 600;
+}
+
+.subtitle {
+  color: #656d76;
+  margin: 0;
+  font-size: 14px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.period-selector label {
+  color: #656d76;
+  margin-right: 4px;
+}
+
+.period-selector select {
+  font-size: 14px;
+  padding: 4px 8px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #1f2328;
+  cursor: pointer;
+}
+
+.summary {
+  color: #656d76;
+  font-size: 13px;
+}
+.overview-chart-container {
+  width: 100%;
+  height: 250px;
+  margin-bottom: 32px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.reviewers-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .reviewers-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.reviewer-card {
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.reviewer-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.reviewer-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid #d1d9e080;
+}
+
+.reviewer-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.reviewer-login {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0969da;
+  text-decoration: none;
+}
+
+.reviewer-login:hover {
+  text-decoration: underline;
+}
+
+.reviewer-stats {
+  font-size: 12px;
+  color: #656d76;
+  margin-top: 2px;
+}
+.reviewer-stats a {
+  color: inherit;
+  text-decoration: none;
+}
+.reviewer-stats a:hover {
+  text-decoration: underline;
+}
+
+.reviewer-rank {
+  font-size: 12px;
+  color: #656d76;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.reviewer-chart-container {
+  width: 100%;
+  height: 60px;
+  margin-top: 8px;
+}
+
+.show-more-container {
+  text-align: center;
+  margin-top: 24px;
+}
+
+.show-more-btn {
+  font-size: 14px;
+  padding: 8px 24px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #1f2328;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.show-more-btn:hover {
+  background: #eef1f4;
+}
+
+.page-footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid #d1d9e0;
+  color: #656d76;
+  font-size: 12px;
+  text-align: center;
+}
+</style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="page-header">
+      <h1 id="page-title">Reviewers of <span id="repo-name">...</span></h1>
+      <p class="subtitle">PR review, comment, and merge activity per month</p>
+    </header>
+
+    <div class="controls">
+      <div class="period-selector">
+        <label>Period:</label>
+        <select id="period-select">
+          <option value="all">All</option>
+          <option value="1">Last month</option>
+          <option value="3">Last 3 months</option>
+          <option value="6">Last 6 months</option>
+          <option value="12" selected>Last 12 months</option>
+          <option value="24">Last 24 months</option>
+        </select>
+      </div>
+      <div class="summary" id="summary"></div>
+    </div>
+
+    <div class="overview-chart-container">
+      <canvas id="overview-chart"></canvas>
+    </div>
+
+    <div class="reviewers-grid" id="reviewers-grid">
+    </div>
+
+    <footer class="page-footer">
+      <p>Generated <span id="generated-at"></span> by <a href="https://github.com/gh-tui-tools/gh-reviewers-graph">gh-reviewers-graph</a></p>
+    </footer>
+  </div>
+
+  <script>const DATA = {
+  "repo": "LadybirdBrowser/ladybird",
+  "generated_at": "2026-03-01T06:57:47.363500+00:00",
+  "reviewers": [
+    {
+      "login": "gmta",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3210731?u=6a256e3eff6d008003e07e90f27413bc89ff5236&v=4",
+      "html_url": "https://github.com/gmta",
+      "total": 1130,
+      "total_comments": 1208,
+      "total_merges": 873,
+      "monthly": {
+        "2024-08": 5,
+        "2024-09": 3,
+        "2024-10": 27,
+        "2024-11": 56,
+        "2024-12": 43,
+        "2025-01": 40,
+        "2025-02": 29,
+        "2025-03": 63,
+        "2025-04": 34,
+        "2025-05": 33,
+        "2025-06": 64,
+        "2025-07": 116,
+        "2025-08": 109,
+        "2025-09": 64,
+        "2025-10": 88,
+        "2025-11": 100,
+        "2025-12": 40,
+        "2026-01": 94,
+        "2026-02": 122
+      },
+      "comment_monthly": {
+        "2024-08": 5,
+        "2024-09": 4,
+        "2024-10": 29,
+        "2024-11": 61,
+        "2024-12": 54,
+        "2025-01": 41,
+        "2025-02": 32,
+        "2025-03": 72,
+        "2025-04": 35,
+        "2025-05": 36,
+        "2025-06": 66,
+        "2025-07": 120,
+        "2025-08": 112,
+        "2025-09": 71,
+        "2025-10": 93,
+        "2025-11": 103,
+        "2025-12": 47,
+        "2026-01": 101,
+        "2026-02": 126
+      },
+      "merge_monthly": {
+        "2024-07": 1,
+        "2024-08": 4,
+        "2024-09": 2,
+        "2024-10": 17,
+        "2024-11": 38,
+        "2024-12": 42,
+        "2025-01": 32,
+        "2025-02": 19,
+        "2025-03": 53,
+        "2025-04": 26,
+        "2025-05": 23,
+        "2025-06": 54,
+        "2025-07": 91,
+        "2025-08": 82,
+        "2025-09": 53,
+        "2025-10": 70,
+        "2025-11": 73,
+        "2025-12": 34,
+        "2026-01": 71,
+        "2026-02": 88
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 149,
+          "commented": 160
+        },
+        "3": {
+          "reviewed": 293,
+          "commented": 312
+        },
+        "6": {
+          "reviewed": 545,
+          "commented": 584
+        },
+        "12": {
+          "reviewed": 946,
+          "commented": 1003
+        },
+        "24": {
+          "reviewed": 1131,
+          "commented": 1210
+        }
+      }
+    },
+    {
+      "login": "AtkinsSJ",
+      "avatar_url": "https://avatars.githubusercontent.com/u/222642?u=7411232e438b9259778b5763226592dd815da5dd&v=4",
+      "html_url": "https://github.com/AtkinsSJ",
+      "total": 720,
+      "total_comments": 842,
+      "total_merges": 538,
+      "monthly": {
+        "2024-06": 10,
+        "2024-07": 28,
+        "2024-08": 30,
+        "2024-09": 28,
+        "2024-10": 44,
+        "2024-11": 35,
+        "2024-12": 37,
+        "2025-01": 39,
+        "2025-02": 33,
+        "2025-03": 35,
+        "2025-04": 37,
+        "2025-05": 35,
+        "2025-06": 41,
+        "2025-07": 47,
+        "2025-08": 43,
+        "2025-09": 60,
+        "2025-10": 40,
+        "2025-11": 16,
+        "2025-12": 25,
+        "2026-01": 27,
+        "2026-02": 30
+      },
+      "comment_monthly": {
+        "2024-06": 18,
+        "2024-07": 37,
+        "2024-08": 34,
+        "2024-09": 33,
+        "2024-10": 54,
+        "2024-11": 42,
+        "2024-12": 45,
+        "2025-01": 46,
+        "2025-02": 40,
+        "2025-03": 47,
+        "2025-04": 37,
+        "2025-05": 41,
+        "2025-06": 46,
+        "2025-07": 51,
+        "2025-08": 46,
+        "2025-09": 66,
+        "2025-10": 44,
+        "2025-11": 20,
+        "2025-12": 28,
+        "2026-01": 33,
+        "2026-02": 34
+      },
+      "merge_monthly": {
+        "2024-06": 2,
+        "2024-07": 22,
+        "2024-08": 16,
+        "2024-09": 15,
+        "2024-10": 30,
+        "2024-11": 27,
+        "2024-12": 28,
+        "2025-01": 32,
+        "2025-02": 28,
+        "2025-03": 24,
+        "2025-04": 24,
+        "2025-05": 26,
+        "2025-06": 35,
+        "2025-07": 41,
+        "2025-08": 29,
+        "2025-09": 46,
+        "2025-10": 31,
+        "2025-11": 12,
+        "2025-12": 21,
+        "2026-01": 22,
+        "2026-02": 27
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 48,
+          "commented": 58
+        },
+        "3": {
+          "reviewed": 107,
+          "commented": 124
+        },
+        "6": {
+          "reviewed": 223,
+          "commented": 254
+        },
+        "12": {
+          "reviewed": 451,
+          "commented": 513
+        },
+        "24": {
+          "reviewed": 723,
+          "commented": 844
+        }
+      }
+    },
+    {
+      "login": "awesomekling",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5954907?u=9d67d26e5a088f31ffff42f60d8d70a6b61c4942&v=4",
+      "html_url": "https://github.com/awesomekling",
+      "total": 159,
+      "total_comments": 347,
+      "total_merges": 1100,
+      "monthly": {
+        "2024-06": 9,
+        "2024-07": 14,
+        "2024-08": 9,
+        "2024-09": 11,
+        "2024-10": 25,
+        "2024-11": 13,
+        "2024-12": 6,
+        "2025-01": 11,
+        "2025-02": 9,
+        "2025-03": 7,
+        "2025-04": 5,
+        "2025-05": 7,
+        "2025-06": 2,
+        "2025-07": 4,
+        "2025-08": 2,
+        "2025-09": 4,
+        "2025-11": 7,
+        "2025-12": 3,
+        "2026-01": 7,
+        "2026-02": 4
+      },
+      "comment_monthly": {
+        "2024-06": 21,
+        "2024-07": 44,
+        "2024-08": 22,
+        "2024-09": 26,
+        "2024-10": 51,
+        "2024-11": 38,
+        "2024-12": 13,
+        "2025-01": 19,
+        "2025-02": 13,
+        "2025-03": 17,
+        "2025-04": 11,
+        "2025-05": 13,
+        "2025-06": 5,
+        "2025-07": 6,
+        "2025-08": 5,
+        "2025-09": 7,
+        "2025-10": 4,
+        "2025-11": 9,
+        "2025-12": 5,
+        "2026-01": 13,
+        "2026-02": 5
+      },
+      "merge_monthly": {
+        "2024-05": 7,
+        "2024-06": 97,
+        "2024-07": 141,
+        "2024-08": 81,
+        "2024-09": 88,
+        "2024-10": 134,
+        "2024-11": 152,
+        "2024-12": 45,
+        "2025-01": 62,
+        "2025-02": 40,
+        "2025-03": 30,
+        "2025-04": 47,
+        "2025-05": 24,
+        "2025-06": 5,
+        "2025-07": 21,
+        "2025-08": 19,
+        "2025-09": 12,
+        "2025-10": 11,
+        "2025-11": 23,
+        "2025-12": 16,
+        "2026-01": 24,
+        "2026-02": 21
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 6,
+          "commented": 10
+        },
+        "3": {
+          "reviewed": 17,
+          "commented": 29
+        },
+        "6": {
+          "reviewed": 28,
+          "commented": 49
+        },
+        "12": {
+          "reviewed": 54,
+          "commented": 107
+        },
+        "24": {
+          "reviewed": 159,
+          "commented": 347
+        }
+      }
+    },
+    {
+      "login": "tcl3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2817754?v=4",
+      "html_url": "https://github.com/tcl3",
+      "total": 487,
+      "total_comments": 557,
+      "total_merges": 377,
+      "monthly": {
+        "2024-06": 9,
+        "2024-07": 35,
+        "2024-08": 34,
+        "2024-09": 20,
+        "2024-10": 36,
+        "2024-11": 41,
+        "2024-12": 34,
+        "2025-01": 34,
+        "2025-02": 25,
+        "2025-03": 21,
+        "2025-04": 14,
+        "2025-05": 17,
+        "2025-06": 28,
+        "2025-07": 31,
+        "2025-08": 19,
+        "2025-09": 28,
+        "2025-10": 14,
+        "2025-11": 9,
+        "2025-12": 9,
+        "2026-01": 20,
+        "2026-02": 9
+      },
+      "comment_monthly": {
+        "2024-06": 11,
+        "2024-07": 40,
+        "2024-08": 36,
+        "2024-09": 23,
+        "2024-10": 41,
+        "2024-11": 50,
+        "2024-12": 42,
+        "2025-01": 36,
+        "2025-02": 29,
+        "2025-03": 22,
+        "2025-04": 16,
+        "2025-05": 24,
+        "2025-06": 31,
+        "2025-07": 38,
+        "2025-08": 23,
+        "2025-09": 30,
+        "2025-10": 15,
+        "2025-11": 9,
+        "2025-12": 9,
+        "2026-01": 20,
+        "2026-02": 12
+      },
+      "merge_monthly": {
+        "2024-06": 5,
+        "2024-07": 21,
+        "2024-08": 32,
+        "2024-09": 16,
+        "2024-10": 28,
+        "2024-11": 36,
+        "2024-12": 29,
+        "2025-01": 31,
+        "2025-02": 23,
+        "2025-03": 17,
+        "2025-04": 12,
+        "2025-05": 14,
+        "2025-06": 14,
+        "2025-07": 24,
+        "2025-08": 15,
+        "2025-09": 24,
+        "2025-10": 9,
+        "2025-11": 6,
+        "2025-12": 7,
+        "2026-01": 8,
+        "2026-02": 6
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 13,
+          "commented": 15
+        },
+        "3": {
+          "reviewed": 42,
+          "commented": 46
+        },
+        "6": {
+          "reviewed": 94,
+          "commented": 103
+        },
+        "12": {
+          "reviewed": 226,
+          "commented": 259
+        },
+        "24": {
+          "reviewed": 487,
+          "commented": 557
+        }
+      }
+    },
+    {
+      "login": "ADKaster",
+      "avatar_url": "https://avatars.githubusercontent.com/u/8388494?v=4",
+      "html_url": "https://github.com/ADKaster",
+      "total": 446,
+      "total_comments": 541,
+      "total_merges": 356,
+      "monthly": {
+        "2024-06": 30,
+        "2024-07": 54,
+        "2024-08": 11,
+        "2024-09": 15,
+        "2024-10": 50,
+        "2024-11": 41,
+        "2024-12": 35,
+        "2025-01": 20,
+        "2025-02": 25,
+        "2025-03": 10,
+        "2025-04": 26,
+        "2025-05": 48,
+        "2025-06": 34,
+        "2025-07": 16,
+        "2025-08": 8,
+        "2025-09": 2,
+        "2025-10": 3,
+        "2025-11": 3,
+        "2025-12": 6,
+        "2026-01": 8,
+        "2026-02": 1
+      },
+      "comment_monthly": {
+        "2024-06": 36,
+        "2024-07": 68,
+        "2024-08": 14,
+        "2024-09": 21,
+        "2024-10": 54,
+        "2024-11": 52,
+        "2024-12": 42,
+        "2025-01": 20,
+        "2025-02": 26,
+        "2025-03": 21,
+        "2025-04": 32,
+        "2025-05": 63,
+        "2025-06": 38,
+        "2025-07": 18,
+        "2025-08": 11,
+        "2025-09": 2,
+        "2025-10": 3,
+        "2025-11": 3,
+        "2025-12": 7,
+        "2026-01": 9,
+        "2026-02": 1
+      },
+      "merge_monthly": {
+        "2024-06": 24,
+        "2024-07": 66,
+        "2024-08": 9,
+        "2024-09": 16,
+        "2024-10": 37,
+        "2024-11": 35,
+        "2024-12": 24,
+        "2025-01": 18,
+        "2025-02": 17,
+        "2025-03": 7,
+        "2025-04": 18,
+        "2025-05": 36,
+        "2025-06": 24,
+        "2025-07": 11,
+        "2025-08": 6,
+        "2025-10": 1,
+        "2025-11": 1,
+        "2025-12": 3,
+        "2026-01": 3
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 12,
+          "commented": 13
+        },
+        "3": {
+          "reviewed": 25,
+          "commented": 28
+        },
+        "6": {
+          "reviewed": 35,
+          "commented": 41
+        },
+        "12": {
+          "reviewed": 185,
+          "commented": 230
+        },
+        "24": {
+          "reviewed": 446,
+          "commented": 541
+        }
+      }
+    },
+    {
+      "login": "trflynn89",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5600524?u=158460a3cc1806467d2e176f5d128e1beaa39c55&v=4",
+      "html_url": "https://github.com/trflynn89",
+      "total": 398,
+      "total_comments": 481,
+      "total_merges": 436,
+      "monthly": {},
+      "comment_monthly": {},
+      "merge_monthly": {
+        "2024-06": 22,
+        "2024-07": 10,
+        "2024-08": 11,
+        "2024-09": 15,
+        "2024-10": 39,
+        "2024-11": 31,
+        "2024-12": 35,
+        "2025-01": 8,
+        "2025-02": 22,
+        "2025-03": 26,
+        "2025-04": 21,
+        "2025-05": 25,
+        "2025-06": 12,
+        "2025-07": 18,
+        "2025-08": 24,
+        "2025-09": 16,
+        "2025-10": 15,
+        "2025-11": 24,
+        "2025-12": 18,
+        "2026-01": 17,
+        "2026-02": 27
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 25,
+          "commented": 34
+        },
+        "3": {
+          "reviewed": 66,
+          "commented": 80
+        },
+        "6": {
+          "reviewed": 112,
+          "commented": 133
+        },
+        "12": {
+          "reviewed": 235,
+          "commented": 278
+        },
+        "24": {
+          "reviewed": 398,
+          "commented": 481
+        }
+      }
+    },
+    {
+      "login": "kalenikaliaksandr",
+      "avatar_url": "https://avatars.githubusercontent.com/u/45686940?u=06e1135af8a71ab4b59c8015626bd6ace12eb973&v=4",
+      "html_url": "https://github.com/kalenikaliaksandr",
+      "total": 185,
+      "total_comments": 201,
+      "total_merges": 324,
+      "monthly": {
+        "2024-06": 4,
+        "2024-07": 15,
+        "2024-08": 6,
+        "2024-09": 9,
+        "2024-10": 17,
+        "2024-11": 13,
+        "2024-12": 6,
+        "2025-01": 5,
+        "2025-02": 3,
+        "2025-03": 8,
+        "2025-04": 2,
+        "2025-05": 14,
+        "2025-06": 3,
+        "2025-07": 15,
+        "2025-08": 10,
+        "2025-09": 3,
+        "2025-10": 9,
+        "2025-11": 11,
+        "2025-12": 7,
+        "2026-01": 10,
+        "2026-02": 15
+      },
+      "comment_monthly": {
+        "2024-06": 5,
+        "2024-07": 21,
+        "2024-08": 7,
+        "2024-09": 10,
+        "2024-10": 19,
+        "2024-11": 13,
+        "2024-12": 7,
+        "2025-01": 5,
+        "2025-02": 4,
+        "2025-03": 9,
+        "2025-04": 3,
+        "2025-05": 14,
+        "2025-06": 3,
+        "2025-07": 16,
+        "2025-08": 10,
+        "2025-09": 3,
+        "2025-10": 9,
+        "2025-11": 11,
+        "2025-12": 7,
+        "2026-01": 9,
+        "2026-02": 16
+      },
+      "merge_monthly": {
+        "2024-06": 3,
+        "2024-07": 15,
+        "2024-08": 9,
+        "2024-09": 15,
+        "2024-10": 22,
+        "2024-11": 25,
+        "2024-12": 19,
+        "2025-01": 12,
+        "2025-02": 10,
+        "2025-03": 31,
+        "2025-04": 9,
+        "2025-05": 17,
+        "2025-06": 15,
+        "2025-07": 21,
+        "2025-08": 12,
+        "2025-09": 11,
+        "2025-10": 8,
+        "2025-11": 7,
+        "2025-12": 13,
+        "2026-01": 22,
+        "2026-02": 28
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 18,
+          "commented": 19
+        },
+        "3": {
+          "reviewed": 39,
+          "commented": 39
+        },
+        "6": {
+          "reviewed": 62,
+          "commented": 62
+        },
+        "12": {
+          "reviewed": 109,
+          "commented": 114
+        },
+        "24": {
+          "reviewed": 185,
+          "commented": 201
+        }
+      }
+    },
+    {
+      "login": "shannonbooth",
+      "avatar_url": "https://avatars.githubusercontent.com/u/35911232?v=4",
+      "html_url": "https://github.com/shannonbooth",
+      "total": 217,
+      "total_comments": 252,
+      "total_merges": 92,
+      "monthly": {
+        "2024-06": 1,
+        "2024-07": 2,
+        "2024-08": 6,
+        "2024-10": 16,
+        "2024-11": 20,
+        "2024-12": 14,
+        "2025-01": 13,
+        "2025-02": 13,
+        "2025-03": 6,
+        "2025-04": 9,
+        "2025-05": 16,
+        "2025-06": 16,
+        "2025-07": 23,
+        "2025-08": 1,
+        "2025-09": 1,
+        "2025-10": 1,
+        "2025-11": 5,
+        "2025-12": 12,
+        "2026-01": 21,
+        "2026-02": 21
+      },
+      "comment_monthly": {
+        "2024-06": 1,
+        "2024-07": 3,
+        "2024-08": 7,
+        "2024-10": 16,
+        "2024-11": 25,
+        "2024-12": 19,
+        "2025-01": 13,
+        "2025-02": 14,
+        "2025-03": 9,
+        "2025-04": 13,
+        "2025-05": 17,
+        "2025-06": 17,
+        "2025-07": 25,
+        "2025-08": 1,
+        "2025-09": 1,
+        "2025-10": 1,
+        "2025-11": 6,
+        "2025-12": 14,
+        "2026-01": 26,
+        "2026-02": 24
+      },
+      "merge_monthly": {
+        "2025-04": 1,
+        "2025-05": 14,
+        "2025-06": 12,
+        "2025-07": 16,
+        "2025-11": 4,
+        "2025-12": 11,
+        "2026-01": 18,
+        "2026-02": 16
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 31,
+          "commented": 37
+        },
+        "3": {
+          "reviewed": 64,
+          "commented": 76
+        },
+        "6": {
+          "reviewed": 68,
+          "commented": 81
+        },
+        "12": {
+          "reviewed": 144,
+          "commented": 168
+        },
+        "24": {
+          "reviewed": 220,
+          "commented": 256
+        }
+      }
+    },
+    {
+      "login": "alimpfard",
+      "avatar_url": "https://avatars.githubusercontent.com/u/14001776?u=2e764556595cfc5ab584fef34c679086953fe011&v=4",
+      "html_url": "https://github.com/alimpfard",
+      "total": 148,
+      "total_comments": 192,
+      "total_merges": 131,
+      "monthly": {
+        "2024-06": 11,
+        "2024-07": 18,
+        "2024-08": 9,
+        "2024-09": 4,
+        "2024-10": 5,
+        "2024-11": 11,
+        "2024-12": 9,
+        "2025-01": 4,
+        "2025-02": 10,
+        "2025-03": 6,
+        "2025-04": 5,
+        "2025-05": 2,
+        "2025-06": 8,
+        "2025-07": 14,
+        "2025-08": 6,
+        "2025-09": 4,
+        "2025-10": 5,
+        "2025-11": 4,
+        "2025-12": 2,
+        "2026-01": 4,
+        "2026-02": 7
+      },
+      "comment_monthly": {
+        "2024-06": 16,
+        "2024-07": 22,
+        "2024-08": 10,
+        "2024-09": 5,
+        "2024-10": 7,
+        "2024-11": 12,
+        "2024-12": 11,
+        "2025-01": 7,
+        "2025-02": 13,
+        "2025-03": 8,
+        "2025-04": 6,
+        "2025-05": 2,
+        "2025-06": 9,
+        "2025-07": 17,
+        "2025-08": 9,
+        "2025-09": 9,
+        "2025-10": 8,
+        "2025-11": 5,
+        "2025-12": 4,
+        "2026-01": 4,
+        "2026-02": 8
+      },
+      "merge_monthly": {
+        "2024-06": 13,
+        "2024-07": 26,
+        "2024-08": 6,
+        "2024-09": 1,
+        "2024-10": 5,
+        "2024-11": 6,
+        "2024-12": 11,
+        "2025-01": 5,
+        "2025-02": 10,
+        "2025-03": 5,
+        "2025-04": 2,
+        "2025-06": 3,
+        "2025-07": 11,
+        "2025-08": 2,
+        "2025-09": 8,
+        "2025-10": 2,
+        "2025-11": 3,
+        "2025-12": 3,
+        "2026-01": 4,
+        "2026-02": 5
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 8,
+          "commented": 10
+        },
+        "3": {
+          "reviewed": 19,
+          "commented": 23
+        },
+        "6": {
+          "reviewed": 35,
+          "commented": 48
+        },
+        "12": {
+          "reviewed": 75,
+          "commented": 98
+        },
+        "24": {
+          "reviewed": 149,
+          "commented": 193
+        }
+      }
+    },
+    {
+      "login": "nico",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3487?v=4",
+      "html_url": "https://github.com/nico",
+      "total": 44,
+      "total_comments": 91,
+      "total_merges": 0,
+      "monthly": {
+        "2024-06": 6,
+        "2024-07": 3,
+        "2024-08": 6,
+        "2024-09": 2,
+        "2024-10": 12,
+        "2024-11": 4,
+        "2025-02": 1,
+        "2025-03": 3,
+        "2025-11": 3,
+        "2026-01": 3,
+        "2026-02": 1
+      },
+      "comment_monthly": {
+        "2024-06": 8,
+        "2024-07": 11,
+        "2024-08": 11,
+        "2024-09": 7,
+        "2024-10": 19,
+        "2024-11": 11,
+        "2025-02": 1,
+        "2025-03": 4,
+        "2025-04": 1,
+        "2025-05": 2,
+        "2025-07": 3,
+        "2025-08": 1,
+        "2025-09": 1,
+        "2025-11": 4,
+        "2025-12": 1,
+        "2026-01": 5,
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "3": {
+          "reviewed": 5,
+          "commented": 8
+        },
+        "6": {
+          "reviewed": 7,
+          "commented": 13
+        },
+        "12": {
+          "reviewed": 12,
+          "commented": 25
+        },
+        "24": {
+          "reviewed": 44,
+          "commented": 91
+        }
+      }
+    },
+    {
+      "login": "R-Goc",
+      "avatar_url": "https://avatars.githubusercontent.com/u/131907007?v=4",
+      "html_url": "https://github.com/R-Goc",
+      "total": 48,
+      "total_comments": 61,
+      "total_merges": 0,
+      "monthly": {
+        "2024-11": 2,
+        "2024-12": 2,
+        "2025-02": 3,
+        "2025-04": 2,
+        "2025-05": 3,
+        "2025-06": 8,
+        "2025-07": 1,
+        "2025-08": 3,
+        "2025-09": 4,
+        "2025-10": 3,
+        "2025-11": 6,
+        "2025-12": 3,
+        "2026-01": 6,
+        "2026-02": 2
+      },
+      "comment_monthly": {
+        "2024-11": 5,
+        "2024-12": 4,
+        "2025-02": 4,
+        "2025-04": 3,
+        "2025-05": 5,
+        "2025-06": 8,
+        "2025-07": 1,
+        "2025-08": 3,
+        "2025-09": 5,
+        "2025-10": 4,
+        "2025-11": 6,
+        "2025-12": 4,
+        "2026-01": 6,
+        "2026-02": 3
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 8,
+          "commented": 9
+        },
+        "3": {
+          "reviewed": 17,
+          "commented": 20
+        },
+        "6": {
+          "reviewed": 27,
+          "commented": 31
+        },
+        "12": {
+          "reviewed": 43,
+          "commented": 50
+        },
+        "24": {
+          "reviewed": 48,
+          "commented": 61
+        }
+      }
+    },
+    {
+      "login": "Zaggy1024",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3149592?u=5550dbf13f0d09213c8570784c861295d80ed65b&v=4",
+      "html_url": "https://github.com/Zaggy1024",
+      "total": 34,
+      "total_comments": 53,
+      "total_merges": 20,
+      "monthly": {
+        "2024-07": 3,
+        "2025-08": 1,
+        "2025-09": 3,
+        "2025-10": 3,
+        "2025-11": 2,
+        "2025-12": 8,
+        "2026-01": 4,
+        "2026-02": 10
+      },
+      "comment_monthly": {
+        "2024-06": 3,
+        "2024-07": 3,
+        "2025-06": 1,
+        "2025-08": 1,
+        "2025-09": 3,
+        "2025-10": 9,
+        "2025-11": 3,
+        "2025-12": 8,
+        "2026-01": 7,
+        "2026-02": 15
+      },
+      "merge_monthly": {
+        "2025-06": 1,
+        "2025-09": 2,
+        "2025-11": 2,
+        "2025-12": 6,
+        "2026-01": 4,
+        "2026-02": 5
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 15,
+          "commented": 22
+        },
+        "3": {
+          "reviewed": 25,
+          "commented": 34
+        },
+        "6": {
+          "reviewed": 30,
+          "commented": 46
+        },
+        "12": {
+          "reviewed": 31,
+          "commented": 47
+        },
+        "24": {
+          "reviewed": 34,
+          "commented": 53
+        }
+      }
+    },
+    {
+      "login": "Hendiadyoin1",
+      "avatar_url": "https://avatars.githubusercontent.com/u/37629766?v=4",
+      "html_url": "https://github.com/Hendiadyoin1",
+      "total": 40,
+      "total_comments": 56,
+      "total_merges": 0,
+      "monthly": {
+        "2024-06": 2,
+        "2024-07": 1,
+        "2024-10": 3,
+        "2024-11": 2,
+        "2025-01": 1,
+        "2025-03": 5,
+        "2025-04": 5,
+        "2025-05": 1,
+        "2025-06": 2,
+        "2025-08": 3,
+        "2025-09": 2,
+        "2025-10": 2,
+        "2025-11": 3,
+        "2025-12": 3,
+        "2026-01": 3,
+        "2026-02": 2
+      },
+      "comment_monthly": {
+        "2024-06": 2,
+        "2024-07": 5,
+        "2024-10": 4,
+        "2024-11": 3,
+        "2025-01": 1,
+        "2025-02": 2,
+        "2025-03": 5,
+        "2025-04": 5,
+        "2025-05": 2,
+        "2025-06": 2,
+        "2025-07": 1,
+        "2025-08": 4,
+        "2025-09": 2,
+        "2025-10": 3,
+        "2025-11": 4,
+        "2025-12": 4,
+        "2026-01": 4,
+        "2026-02": 3
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 4,
+          "commented": 5
+        },
+        "3": {
+          "reviewed": 8,
+          "commented": 11
+        },
+        "6": {
+          "reviewed": 16,
+          "commented": 22
+        },
+        "12": {
+          "reviewed": 31,
+          "commented": 39
+        },
+        "24": {
+          "reviewed": 40,
+          "commented": 56
+        }
+      }
+    },
+    {
+      "login": "circl-lastname",
+      "avatar_url": "https://avatars.githubusercontent.com/u/39885272?u=e34f9cd7bce4c05f95f4c2048356da6f33051a5a&v=4",
+      "html_url": "https://github.com/circl-lastname",
+      "total": 13,
+      "total_comments": 74,
+      "total_merges": 0,
+      "monthly": {
+        "2024-06": 2,
+        "2024-07": 2,
+        "2024-08": 1,
+        "2024-09": 2,
+        "2024-10": 1,
+        "2025-03": 1,
+        "2025-07": 1,
+        "2025-11": 1,
+        "2025-12": 1,
+        "2026-02": 1
+      },
+      "comment_monthly": {
+        "2024-06": 13,
+        "2024-07": 12,
+        "2024-08": 12,
+        "2024-09": 7,
+        "2024-10": 4,
+        "2024-11": 4,
+        "2024-12": 5,
+        "2025-01": 2,
+        "2025-02": 2,
+        "2025-03": 5,
+        "2025-05": 1,
+        "2025-07": 2,
+        "2025-09": 1,
+        "2025-10": 1,
+        "2025-11": 1,
+        "2025-12": 1,
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "3": {
+          "reviewed": 3,
+          "commented": 3
+        },
+        "6": {
+          "reviewed": 4,
+          "commented": 6
+        },
+        "12": {
+          "reviewed": 5,
+          "commented": 16
+        },
+        "24": {
+          "reviewed": 13,
+          "commented": 74
+        }
+      }
+    },
+    {
+      "login": "Lubrsi",
+      "avatar_url": "https://avatars.githubusercontent.com/u/25595356?u=0cdae0ed152fad96bf1ed7f16b97a2361d428ca9&v=4",
+      "html_url": "https://github.com/Lubrsi",
+      "total": 23,
+      "total_comments": 40,
+      "total_merges": 23,
+      "monthly": {
+        "2024-11": 1,
+        "2024-12": 2,
+        "2025-01": 1,
+        "2025-02": 3,
+        "2025-05": 1,
+        "2025-07": 5,
+        "2025-08": 3,
+        "2025-09": 2,
+        "2025-10": 4,
+        "2026-01": 1
+      },
+      "comment_monthly": {
+        "2024-11": 1,
+        "2024-12": 3,
+        "2025-01": 1,
+        "2025-02": 4,
+        "2025-03": 1,
+        "2025-04": 1,
+        "2025-05": 1,
+        "2025-06": 1,
+        "2025-07": 7,
+        "2025-08": 5,
+        "2025-09": 3,
+        "2025-10": 8,
+        "2025-11": 2,
+        "2026-01": 1,
+        "2026-02": 1
+      },
+      "merge_monthly": {
+        "2024-11": 1,
+        "2024-12": 2,
+        "2025-01": 4,
+        "2025-02": 2,
+        "2025-04": 1,
+        "2025-05": 1,
+        "2025-07": 3,
+        "2025-08": 2,
+        "2025-09": 3,
+        "2025-10": 3,
+        "2026-01": 1
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 2,
+          "commented": 3
+        },
+        "6": {
+          "reviewed": 13,
+          "commented": 22
+        },
+        "12": {
+          "reviewed": 16,
+          "commented": 31
+        },
+        "24": {
+          "reviewed": 23,
+          "commented": 40
+        }
+      }
+    },
+    {
+      "login": "Psychpsyo",
+      "avatar_url": "https://avatars.githubusercontent.com/u/60073468?u=6a49eff6ce3dd09016478f37e9ccd38d940abf05&v=4",
+      "html_url": "https://github.com/Psychpsyo",
+      "total": 25,
+      "total_comments": 55,
+      "total_merges": 0,
+      "monthly": {
+        "2024-11": 1,
+        "2024-12": 1,
+        "2025-02": 2,
+        "2025-05": 1,
+        "2025-07": 2,
+        "2025-09": 4,
+        "2025-10": 2,
+        "2025-11": 5,
+        "2025-12": 2,
+        "2026-01": 1,
+        "2026-02": 4
+      },
+      "comment_monthly": {
+        "2024-10": 1,
+        "2024-11": 4,
+        "2024-12": 2,
+        "2025-02": 4,
+        "2025-03": 2,
+        "2025-04": 1,
+        "2025-05": 4,
+        "2025-06": 2,
+        "2025-07": 4,
+        "2025-08": 1,
+        "2025-09": 6,
+        "2025-10": 2,
+        "2025-11": 6,
+        "2025-12": 3,
+        "2026-01": 1,
+        "2026-02": 12
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 9,
+          "commented": 17
+        },
+        "3": {
+          "reviewed": 13,
+          "commented": 24
+        },
+        "6": {
+          "reviewed": 19,
+          "commented": 32
+        },
+        "12": {
+          "reviewed": 22,
+          "commented": 46
+        },
+        "24": {
+          "reviewed": 26,
+          "commented": 56
+        }
+      }
+    },
+    {
+      "login": "rgret-dev",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19354877?v=4",
+      "html_url": "https://github.com/rgret-dev",
+      "total": 19,
+      "total_comments": 47,
+      "total_merges": 0,
+      "monthly": {
+        "2024-09": 2,
+        "2024-10": 2,
+        "2024-11": 4,
+        "2024-12": 4,
+        "2025-05": 1,
+        "2025-08": 2,
+        "2025-09": 1,
+        "2025-10": 1,
+        "2026-01": 1,
+        "2026-02": 1
+      },
+      "comment_monthly": {
+        "2024-07": 3,
+        "2024-09": 3,
+        "2024-10": 3,
+        "2024-11": 7,
+        "2024-12": 12,
+        "2025-02": 1,
+        "2025-03": 2,
+        "2025-04": 1,
+        "2025-05": 2,
+        "2025-06": 2,
+        "2025-08": 4,
+        "2025-09": 1,
+        "2025-10": 4,
+        "2026-01": 1,
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 2,
+          "commented": 3
+        },
+        "6": {
+          "reviewed": 7,
+          "commented": 11
+        },
+        "12": {
+          "reviewed": 9,
+          "commented": 22
+        },
+        "24": {
+          "reviewed": 19,
+          "commented": 47
+        }
+      }
+    },
+    {
+      "login": "shlyakpavel",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19782228?u=53a7c1578ee225326a49d17f0afa058489aa76f1&v=4",
+      "html_url": "https://github.com/shlyakpavel",
+      "total": 12,
+      "total_comments": 52,
+      "total_merges": 0,
+      "monthly": {
+        "2024-08": 1,
+        "2024-10": 1,
+        "2024-11": 3,
+        "2024-12": 7
+      },
+      "comment_monthly": {
+        "2024-07": 2,
+        "2024-08": 1,
+        "2024-09": 4,
+        "2024-10": 7,
+        "2024-11": 11,
+        "2024-12": 20,
+        "2025-01": 1,
+        "2025-09": 4,
+        "2025-10": 1,
+        "2025-12": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 7
+        },
+        "12": {
+          "reviewed": 2,
+          "commented": 9
+        },
+        "24": {
+          "reviewed": 12,
+          "commented": 52
+        }
+      }
+    },
+    {
+      "login": "InvalidUsernameException",
+      "avatar_url": "https://avatars.githubusercontent.com/u/26507958?v=4",
+      "html_url": "https://github.com/InvalidUsernameException",
+      "total": 14,
+      "total_comments": 45,
+      "total_merges": 0,
+      "monthly": {
+        "2025-02": 1,
+        "2025-03": 3,
+        "2025-04": 1,
+        "2025-05": 1,
+        "2025-07": 1,
+        "2025-08": 1,
+        "2025-10": 1,
+        "2025-11": 3,
+        "2026-02": 2
+      },
+      "comment_monthly": {
+        "2024-08": 1,
+        "2024-12": 2,
+        "2025-01": 2,
+        "2025-02": 3,
+        "2025-03": 6,
+        "2025-04": 3,
+        "2025-05": 4,
+        "2025-07": 3,
+        "2025-08": 3,
+        "2025-10": 5,
+        "2025-11": 4,
+        "2026-01": 2,
+        "2026-02": 7
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 3,
+          "commented": 11
+        },
+        "3": {
+          "reviewed": 6,
+          "commented": 16
+        },
+        "6": {
+          "reviewed": 7,
+          "commented": 22
+        },
+        "12": {
+          "reviewed": 14,
+          "commented": 39
+        },
+        "24": {
+          "reviewed": 14,
+          "commented": 45
+        }
+      }
+    },
+    {
+      "login": "LucasChollet",
+      "avatar_url": "https://avatars.githubusercontent.com/u/26030965?v=4",
+      "html_url": "https://github.com/LucasChollet",
+      "total": 24,
+      "total_comments": 35,
+      "total_merges": 0,
+      "monthly": {
+        "2024-07": 3,
+        "2024-08": 1,
+        "2024-10": 3,
+        "2024-11": 4,
+        "2024-12": 7,
+        "2025-01": 1,
+        "2025-02": 1,
+        "2025-03": 2,
+        "2025-04": 1,
+        "2025-07": 1
+      },
+      "comment_monthly": {
+        "2024-07": 3,
+        "2024-08": 1,
+        "2024-09": 1,
+        "2024-10": 5,
+        "2024-11": 5,
+        "2024-12": 9,
+        "2025-01": 2,
+        "2025-02": 1,
+        "2025-03": 2,
+        "2025-04": 2,
+        "2025-06": 1,
+        "2025-07": 1,
+        "2026-01": 1,
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 1,
+          "commented": 3
+        },
+        "3": {
+          "reviewed": 1,
+          "commented": 3
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 3
+        },
+        "12": {
+          "reviewed": 7,
+          "commented": 11
+        },
+        "24": {
+          "reviewed": 24,
+          "commented": 35
+        }
+      }
+    },
+    {
+      "login": "kennethmyhra",
+      "avatar_url": "https://avatars.githubusercontent.com/u/248795?u=6a87ee5821f9b811f8d45c5709176ca9376eb59c&v=4",
+      "html_url": "https://github.com/kennethmyhra",
+      "total": 21,
+      "total_comments": 24,
+      "total_merges": 0,
+      "monthly": {
+        "2024-07": 5,
+        "2024-08": 2,
+        "2024-12": 3,
+        "2025-04": 5,
+        "2025-07": 2,
+        "2025-08": 3,
+        "2025-09": 1
+      },
+      "comment_monthly": {
+        "2024-07": 6,
+        "2024-08": 3,
+        "2024-12": 4,
+        "2025-04": 5,
+        "2025-07": 2,
+        "2025-08": 3,
+        "2025-09": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 3,
+          "commented": 3
+        },
+        "12": {
+          "reviewed": 11,
+          "commented": 11
+        },
+        "24": {
+          "reviewed": 21,
+          "commented": 24
+        }
+      }
+    },
+    {
+      "login": "sideshowbarker",
+      "avatar_url": "https://avatars.githubusercontent.com/u/194984?v=4",
+      "html_url": "https://github.com/sideshowbarker",
+      "total": 18,
+      "total_comments": 27,
+      "total_merges": 0,
+      "monthly": {
+        "2024-07": 4,
+        "2024-08": 1,
+        "2024-10": 5,
+        "2024-11": 3,
+        "2024-12": 4,
+        "2026-01": 1
+      },
+      "comment_monthly": {
+        "2024-07": 5,
+        "2024-08": 2,
+        "2024-10": 7,
+        "2024-11": 3,
+        "2024-12": 5,
+        "2025-03": 4,
+        "2026-01": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 1,
+          "commented": 2
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 2
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 5
+        },
+        "24": {
+          "reviewed": 18,
+          "commented": 27
+        }
+      }
+    },
+    {
+      "login": "Gingeh",
+      "avatar_url": "https://avatars.githubusercontent.com/u/39150378?u=4f3479471239403bca057341167f1eed270efb90&v=4",
+      "html_url": "https://github.com/Gingeh",
+      "total": 9,
+      "total_comments": 33,
+      "total_merges": 0,
+      "monthly": {
+        "2024-10": 2,
+        "2024-11": 1,
+        "2024-12": 4,
+        "2025-01": 2
+      },
+      "comment_monthly": {
+        "2024-09": 3,
+        "2024-10": 3,
+        "2024-11": 3,
+        "2024-12": 9,
+        "2025-01": 2,
+        "2025-03": 2,
+        "2025-05": 1,
+        "2025-06": 1,
+        "2025-07": 1,
+        "2025-09": 1,
+        "2025-10": 1,
+        "2025-11": 1,
+        "2025-12": 2,
+        "2026-01": 3
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 2
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 5
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 8
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 13
+        },
+        "24": {
+          "reviewed": 9,
+          "commented": 33
+        }
+      }
+    },
+    {
+      "login": "stelar7",
+      "avatar_url": "https://avatars.githubusercontent.com/u/940154?v=4",
+      "html_url": "https://github.com/stelar7",
+      "total": 11,
+      "total_comments": 21,
+      "total_merges": 0,
+      "monthly": {
+        "2024-10": 3,
+        "2024-11": 3,
+        "2025-05": 3,
+        "2025-07": 1,
+        "2026-02": 1
+      },
+      "comment_monthly": {
+        "2024-10": 4,
+        "2024-11": 4,
+        "2024-12": 6,
+        "2025-01": 1,
+        "2025-05": 3,
+        "2025-07": 1,
+        "2025-09": 1,
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 2,
+          "commented": 3
+        },
+        "12": {
+          "reviewed": 5,
+          "commented": 6
+        },
+        "24": {
+          "reviewed": 11,
+          "commented": 21
+        }
+      }
+    },
+    {
+      "login": "Calme1709",
+      "avatar_url": "https://avatars.githubusercontent.com/u/30140939?v=4",
+      "html_url": "https://github.com/Calme1709",
+      "total": 12,
+      "total_comments": 18,
+      "total_merges": 0,
+      "monthly": {
+        "2025-07": 1,
+        "2025-08": 1,
+        "2025-09": 2,
+        "2025-10": 1,
+        "2025-11": 3,
+        "2025-12": 1,
+        "2026-02": 3
+      },
+      "comment_monthly": {
+        "2025-07": 2,
+        "2025-08": 2,
+        "2025-09": 4,
+        "2025-10": 1,
+        "2025-11": 3,
+        "2025-12": 2,
+        "2026-01": 1,
+        "2026-02": 3
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 4,
+          "commented": 5
+        },
+        "3": {
+          "reviewed": 7,
+          "commented": 9
+        },
+        "6": {
+          "reviewed": 10,
+          "commented": 14
+        },
+        "12": {
+          "reviewed": 12,
+          "commented": 18
+        },
+        "24": {
+          "reviewed": 12,
+          "commented": 18
+        }
+      }
+    },
+    {
+      "login": "BertalanD",
+      "avatar_url": "https://avatars.githubusercontent.com/u/25866827?u=6d596ee0111e5c185dfed6c0755382627c940dad&v=4",
+      "html_url": "https://github.com/BertalanD",
+      "total": 10,
+      "total_comments": 15,
+      "total_merges": 4,
+      "monthly": {
+        "2024-06": 2,
+        "2024-07": 5,
+        "2024-12": 1,
+        "2025-05": 2
+      },
+      "comment_monthly": {
+        "2024-06": 5,
+        "2024-07": 5,
+        "2024-09": 1,
+        "2024-12": 1,
+        "2025-05": 2,
+        "2025-07": 1
+      },
+      "merge_monthly": {
+        "2024-06": 1,
+        "2024-07": 3
+      },
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 3,
+          "commented": 4
+        },
+        "24": {
+          "reviewed": 10,
+          "commented": 15
+        }
+      }
+    },
+    {
+      "login": "jamierocks",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5103549?u=907d77f22ec72e8f42f07a017b0d7a2dc141622b&v=4",
+      "html_url": "https://github.com/jamierocks",
+      "total": 8,
+      "total_comments": 16,
+      "total_merges": 0,
+      "monthly": {
+        "2024-06": 1,
+        "2024-07": 3,
+        "2024-08": 4
+      },
+      "comment_monthly": {
+        "2024-06": 3,
+        "2024-07": 5,
+        "2024-08": 6,
+        "2024-10": 1,
+        "2025-08": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 8,
+          "commented": 16
+        }
+      }
+    },
+    {
+      "login": "rcorsi",
+      "avatar_url": "https://avatars.githubusercontent.com/u/5201151?v=4",
+      "html_url": "https://github.com/rcorsi",
+      "total": 8,
+      "total_comments": 16,
+      "total_merges": 0,
+      "monthly": {
+        "2025-07": 1,
+        "2025-08": 1,
+        "2025-11": 1,
+        "2025-12": 1,
+        "2026-01": 2,
+        "2026-02": 2
+      },
+      "comment_monthly": {
+        "2025-06": 1,
+        "2025-07": 1,
+        "2025-08": 1,
+        "2025-09": 2,
+        "2025-11": 1,
+        "2025-12": 5,
+        "2026-01": 3,
+        "2026-02": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "3": {
+          "reviewed": 6,
+          "commented": 11
+        },
+        "6": {
+          "reviewed": 7,
+          "commented": 14
+        },
+        "12": {
+          "reviewed": 8,
+          "commented": 16
+        },
+        "24": {
+          "reviewed": 8,
+          "commented": 16
+        }
+      }
+    },
+    {
+      "login": "stasoid",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2577509?u=d9347af49a7a009f07b2b7ff542deee25346ad65&v=4",
+      "html_url": "https://github.com/stasoid",
+      "total": 6,
+      "total_comments": 10,
+      "total_merges": 0,
+      "monthly": {
+        "2025-02": 2,
+        "2025-05": 1,
+        "2025-06": 1,
+        "2025-08": 1,
+        "2025-11": 1
+      },
+      "comment_monthly": {
+        "2024-10": 1,
+        "2024-11": 3,
+        "2025-02": 2,
+        "2025-05": 1,
+        "2025-06": 1,
+        "2025-08": 1,
+        "2025-11": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "12": {
+          "reviewed": 6,
+          "commented": 7
+        },
+        "24": {
+          "reviewed": 6,
+          "commented": 10
+        }
+      }
+    },
+    {
+      "login": "yyny",
+      "avatar_url": "https://avatars.githubusercontent.com/u/6576327?u=43ae3da966bb6c8d87dd97d002d81b7f44da8225&v=4",
+      "html_url": "https://github.com/yyny",
+      "total": 5,
+      "total_comments": 11,
+      "total_merges": 0,
+      "monthly": {
+        "2024-11": 5
+      },
+      "comment_monthly": {
+        "2024-10": 1,
+        "2024-11": 10
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 5,
+          "commented": 11
+        }
+      }
+    },
+    {
+      "login": "ayeteadoe",
+      "avatar_url": "https://avatars.githubusercontent.com/u/199488052?u=3b0ad9d939f754a5228da0af3a5fb4d2eedc3cfc&v=4",
+      "html_url": "https://github.com/ayeteadoe",
+      "total": 6,
+      "total_comments": 9,
+      "total_merges": 0,
+      "monthly": {
+        "2025-05": 1,
+        "2025-08": 1,
+        "2025-10": 1,
+        "2025-11": 1,
+        "2025-12": 2
+      },
+      "comment_monthly": {
+        "2025-05": 1,
+        "2025-06": 1,
+        "2025-08": 1,
+        "2025-10": 2,
+        "2025-11": 1,
+        "2025-12": 3
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 3,
+          "commented": 5
+        },
+        "6": {
+          "reviewed": 5,
+          "commented": 8
+        },
+        "12": {
+          "reviewed": 6,
+          "commented": 9
+        },
+        "24": {
+          "reviewed": 6,
+          "commented": 9
+        }
+      }
+    },
+    {
+      "login": "cqundefine",
+      "avatar_url": "https://avatars.githubusercontent.com/u/60255716?v=4",
+      "html_url": "https://github.com/cqundefine",
+      "total": 6,
+      "total_comments": 9,
+      "total_merges": 0,
+      "monthly": {
+        "2025-08": 2,
+        "2025-11": 1,
+        "2026-01": 3
+      },
+      "comment_monthly": {
+        "2025-08": 2,
+        "2025-10": 2,
+        "2025-11": 1,
+        "2026-01": 4
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 4,
+          "commented": 4
+        },
+        "3": {
+          "reviewed": 6,
+          "commented": 8
+        },
+        "6": {
+          "reviewed": 6,
+          "commented": 9
+        },
+        "12": {
+          "reviewed": 6,
+          "commented": 9
+        },
+        "24": {
+          "reviewed": 6,
+          "commented": 9
+        }
+      }
+    },
+    {
+      "login": "lpas",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12859060?u=c0cf37824e0ed7d31bb9fd6e00c99d44a8ca5f4d&v=4",
+      "html_url": "https://github.com/lpas",
+      "total": 4,
+      "total_comments": 7,
+      "total_merges": 0,
+      "monthly": {
+        "2025-10": 1,
+        "2025-11": 3
+      },
+      "comment_monthly": {
+        "2025-10": 1,
+        "2025-11": 5,
+        "2025-12": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 1,
+          "commented": 3
+        },
+        "6": {
+          "reviewed": 4,
+          "commented": 7
+        },
+        "12": {
+          "reviewed": 4,
+          "commented": 7
+        },
+        "24": {
+          "reviewed": 4,
+          "commented": 7
+        }
+      }
+    },
+    {
+      "login": "teaalltr",
+      "avatar_url": "https://avatars.githubusercontent.com/u/11365978?v=4",
+      "html_url": "https://github.com/teaalltr",
+      "total": 4,
+      "total_comments": 6,
+      "total_merges": 0,
+      "monthly": {
+        "2025-03": 2,
+        "2025-04": 2
+      },
+      "comment_monthly": {
+        "2025-03": 3,
+        "2025-04": 3
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 4,
+          "commented": 6
+        },
+        "24": {
+          "reviewed": 4,
+          "commented": 6
+        }
+      }
+    },
+    {
+      "login": "paaspaas00",
+      "avatar_url": "https://avatars.githubusercontent.com/u/151774837?v=4",
+      "html_url": "https://github.com/paaspaas00",
+      "total": 2,
+      "total_comments": 6,
+      "total_merges": 0,
+      "monthly": {
+        "2024-09": 1,
+        "2025-05": 1
+      },
+      "comment_monthly": {
+        "2024-09": 1,
+        "2025-03": 2,
+        "2025-05": 1,
+        "2025-10": 1,
+        "2026-01": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 2
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 5
+        },
+        "24": {
+          "reviewed": 2,
+          "commented": 6
+        }
+      }
+    },
+    {
+      "login": "tete17",
+      "avatar_url": "https://avatars.githubusercontent.com/u/13263011?u=bcbbbdfa06e473a693d7b7e72c5a97d6e9b308e7&v=4",
+      "html_url": "https://github.com/tete17",
+      "total": 1,
+      "total_comments": 7,
+      "total_merges": 0,
+      "monthly": {
+        "2025-09": 1
+      },
+      "comment_monthly": {
+        "2025-01": 1,
+        "2025-09": 1,
+        "2025-10": 3,
+        "2025-12": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 2
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 6
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 6
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 7
+        }
+      }
+    },
+    {
+      "login": "lukewarlow",
+      "avatar_url": "https://avatars.githubusercontent.com/u/32498324?u=33625fe335fbb6a8a62271bcc211afc447904e8a&v=4",
+      "html_url": "https://github.com/lukewarlow",
+      "total": 1,
+      "total_comments": 6,
+      "total_merges": 0,
+      "monthly": {
+        "2025-02": 1
+      },
+      "comment_monthly": {
+        "2024-06": 1,
+        "2024-11": 1,
+        "2024-12": 1,
+        "2025-01": 1,
+        "2025-02": 1,
+        "2025-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 6
+        }
+      }
+    },
+    {
+      "login": "manuel-za",
+      "avatar_url": "https://avatars.githubusercontent.com/u/190109152?u=31c28582eb111244478e592c80233270e74f3ccb&v=4",
+      "html_url": "https://github.com/manuel-za",
+      "total": 1,
+      "total_comments": 6,
+      "total_merges": 0,
+      "monthly": {
+        "2025-10": 1
+      },
+      "comment_monthly": {
+        "2025-01": 1,
+        "2025-06": 1,
+        "2025-10": 3,
+        "2025-11": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 4
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 5
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 6
+        }
+      }
+    },
+    {
+      "login": "ronak69",
+      "avatar_url": "https://avatars.githubusercontent.com/u/70647861?u=c941513983eac96b7074efb8909cb7c9425b2f40&v=4",
+      "html_url": "https://github.com/ronak69",
+      "total": 1,
+      "total_comments": 6,
+      "total_merges": 0,
+      "monthly": {
+        "2024-10": 1
+      },
+      "comment_monthly": {
+        "2024-09": 1,
+        "2024-10": 3,
+        "2024-11": 1,
+        "2024-12": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 6
+        }
+      }
+    },
+    {
+      "login": "sakgoyal",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19929553?u=d2c7051899b5b53c66920ec0655b906a226387ba&v=4",
+      "html_url": "https://github.com/sakgoyal",
+      "total": 1,
+      "total_comments": 6,
+      "total_merges": 0,
+      "monthly": {
+        "2025-08": 1
+      },
+      "comment_monthly": {
+        "2024-10": 1,
+        "2024-11": 1,
+        "2025-01": 1,
+        "2025-06": 1,
+        "2025-07": 1,
+        "2025-08": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 4
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 6
+        }
+      }
+    },
+    {
+      "login": "jonbgamble",
+      "avatar_url": "https://avatars.githubusercontent.com/u/101470903?v=4",
+      "html_url": "https://github.com/jonbgamble",
+      "total": 1,
+      "total_comments": 5,
+      "total_merges": 0,
+      "monthly": {
+        "2026-01": 1
+      },
+      "comment_monthly": {
+        "2025-12": 1,
+        "2026-01": 2,
+        "2026-02": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 4
+        },
+        "3": {
+          "reviewed": 1,
+          "commented": 6
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 6
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 6
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 6
+        }
+      }
+    },
+    {
+      "login": "BenWiederhake",
+      "avatar_url": "https://avatars.githubusercontent.com/u/2690845?u=7b755e8cd30fbb47bda762d82e6a3ccd808e46ce&v=4",
+      "html_url": "https://github.com/BenWiederhake",
+      "total": 2,
+      "total_comments": 4,
+      "total_merges": 0,
+      "monthly": {
+        "2024-10": 2
+      },
+      "comment_monthly": {
+        "2024-10": 4
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 2,
+          "commented": 4
+        }
+      }
+    },
+    {
+      "login": "JanKoudijs",
+      "avatar_url": "https://avatars.githubusercontent.com/u/26183008?v=4",
+      "html_url": "https://github.com/JanKoudijs",
+      "total": 3,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {
+        "2025-07": 2,
+        "2025-10": 1
+      },
+      "comment_monthly": {
+        "2025-07": 2,
+        "2025-10": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 3,
+          "commented": 3
+        },
+        "24": {
+          "reviewed": 3,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "CanadaHonk",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19228318?u=eea29901f58d6357f0fc2992747d0b4b80d23c8e&v=4",
+      "html_url": "https://github.com/CanadaHonk",
+      "total": 2,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {
+        "2024-06": 1,
+        "2025-06": 1
+      },
+      "comment_monthly": {
+        "2024-06": 1,
+        "2025-06": 1,
+        "2025-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 2
+        },
+        "24": {
+          "reviewed": 2,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "ananas-dev",
+      "avatar_url": "https://avatars.githubusercontent.com/u/46646129?u=714d3344509b9be677c06c28a81cda88baf237e3&v=4",
+      "html_url": "https://github.com/ananas-dev",
+      "total": 2,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {
+        "2024-12": 1,
+        "2025-05": 1
+      },
+      "comment_monthly": {
+        "2025-05": 1,
+        "2025-06": 1,
+        "2025-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 3
+        },
+        "24": {
+          "reviewed": 2,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "aplefull",
+      "avatar_url": "https://avatars.githubusercontent.com/u/10453915?u=7130db28c43005c939e75ab973bd95d049ffcbab&v=4",
+      "html_url": "https://github.com/aplefull",
+      "total": 2,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {
+        "2025-12": 1,
+        "2026-02": 1
+      },
+      "comment_monthly": {
+        "2025-03": 1,
+        "2025-12": 1,
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "6": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "12": {
+          "reviewed": 2,
+          "commented": 3
+        },
+        "24": {
+          "reviewed": 2,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "timschumi",
+      "avatar_url": "https://avatars.githubusercontent.com/u/16820960?u=57d4689856a986be76fcc3cd155f6cee6f4703e0&v=4",
+      "html_url": "https://github.com/timschumi",
+      "total": 1,
+      "total_comments": 4,
+      "total_merges": 0,
+      "monthly": {
+        "2024-12": 1
+      },
+      "comment_monthly": {
+        "2024-11": 1,
+        "2024-12": 1,
+        "2025-03": 1,
+        "2025-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 2
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 4
+        }
+      }
+    },
+    {
+      "login": "bplaat",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19894029?u=34f7de24be2f9e41d2bfecb606050fef72883137&v=4",
+      "html_url": "https://github.com/bplaat",
+      "total": 1,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {
+        "2024-07": 1
+      },
+      "comment_monthly": {
+        "2024-06": 1,
+        "2024-07": 1,
+        "2025-04": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "colleirose",
+      "avatar_url": "https://avatars.githubusercontent.com/u/167055039?u=255710489a5cda4d31902c87a5abd60001654dc9&v=4",
+      "html_url": "https://github.com/colleirose",
+      "total": 2,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {
+        "2025-10": 1,
+        "2025-11": 1
+      },
+      "comment_monthly": {
+        "2025-10": 1,
+        "2025-11": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "12": {
+          "reviewed": 2,
+          "commented": 2
+        },
+        "24": {
+          "reviewed": 2,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "simonkrauter",
+      "avatar_url": "https://avatars.githubusercontent.com/u/8593614?u=db621765c52ee4952f941ee8d3804feb48c4e083&v=4",
+      "html_url": "https://github.com/simonkrauter",
+      "total": 1,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {
+        "2024-11": 1
+      },
+      "comment_monthly": {
+        "2024-07": 1,
+        "2024-08": 1,
+        "2024-11": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "F3n67u",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12343178?u=5709fea5745a389a2ce2bf522e57aef637a62ba1&v=4",
+      "html_url": "https://github.com/F3n67u",
+      "total": 0,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-10": 1,
+        "2024-11": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "devgianlu",
+      "avatar_url": "https://avatars.githubusercontent.com/u/14827249?u=de15f70a65d5e61ba8972d5dc2132b8a1bb23429&v=4",
+      "html_url": "https://github.com/devgianlu",
+      "total": 1,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {
+        "2025-05": 1
+      },
+      "comment_monthly": {
+        "2025-05": 1,
+        "2025-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 2
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "fgaz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/8182846?u=3fa535480e5da34f52d2c7449318ad206380bdc6&v=4",
+      "html_url": "https://github.com/fgaz",
+      "total": 0,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-06": 2,
+        "2025-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "hanpham32",
+      "avatar_url": "https://avatars.githubusercontent.com/u/36429830?u=d5b75f01ea2c116d549957cd4608e98abc998b95&v=4",
+      "html_url": "https://github.com/hanpham32",
+      "total": 1,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {
+        "2024-09": 1
+      },
+      "comment_monthly": {
+        "2024-09": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "kostyafarber",
+      "avatar_url": "https://avatars.githubusercontent.com/u/73378227?u=6226f6faad13cf5a9f562073d1089caa9184589d&v=4",
+      "html_url": "https://github.com/kostyafarber",
+      "total": 1,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {
+        "2024-10": 1
+      },
+      "comment_monthly": {
+        "2024-10": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "sideeffect42",
+      "avatar_url": "https://avatars.githubusercontent.com/u/940027?u=9d5f18c197b18e9b51a5bc77b7fb2e71a451e54c&v=4",
+      "html_url": "https://github.com/sideeffect42",
+      "total": 0,
+      "total_comments": 3,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-06": 1,
+        "2024-07": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 3
+        }
+      }
+    },
+    {
+      "login": "skyz1",
+      "avatar_url": "https://avatars.githubusercontent.com/u/81387843?u=cf694f80ff2ed68131dbd3fbbbf3f7a6b26df303&v=4",
+      "html_url": "https://github.com/skyz1",
+      "total": 1,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {
+        "2025-04": 1
+      },
+      "comment_monthly": {
+        "2025-04": 1,
+        "2025-08": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 2
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "ChaseKnowlden",
+      "avatar_url": "https://avatars.githubusercontent.com/u/46290258?v=4",
+      "html_url": "https://github.com/ChaseKnowlden",
+      "total": 0,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-09": 1,
+        "2024-10": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "Norbiros",
+      "avatar_url": "https://avatars.githubusercontent.com/u/89837724?u=972239b00f6e02a6a79f89519d9fa06f8bc4eb6f&v=4",
+      "html_url": "https://github.com/Norbiros",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2025-09": 1
+      },
+      "comment_monthly": {
+        "2025-09": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "SINF-KEN",
+      "avatar_url": "https://avatars.githubusercontent.com/u/148757725?u=2168a666107cffadf87b7b2c8f382440c7f5b628&v=4",
+      "html_url": "https://github.com/SINF-KEN",
+      "total": 0,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2025-02": 1,
+        "2025-03": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 2
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "TobyAsE",
+      "avatar_url": "https://avatars.githubusercontent.com/u/6002167?u=ded4d05f34a7610bc38ad77149c2a85d7cffb7d5&v=4",
+      "html_url": "https://github.com/TobyAsE",
+      "total": 0,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-08": 2
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "alissonlauffer",
+      "avatar_url": "https://avatars.githubusercontent.com/u/29029632?u=c5748fe931087f94e00015cb86c83d232a8309f9&v=4",
+      "html_url": "https://github.com/alissonlauffer",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2024-12": 1
+      },
+      "comment_monthly": {
+        "2024-12": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "dzfrias",
+      "avatar_url": "https://avatars.githubusercontent.com/u/96022404?u=85f712c1af7407e33981c1e8ef83d3703ed7e764&v=4",
+      "html_url": "https://github.com/dzfrias",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2024-08": 1
+      },
+      "comment_monthly": {
+        "2024-08": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "kemzeb",
+      "avatar_url": "https://avatars.githubusercontent.com/u/60799661?u=20266ce3cf9f7f7afb116ec9faae18e2a544d27c&v=4",
+      "html_url": "https://github.com/kemzeb",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2024-07": 1
+      },
+      "comment_monthly": {
+        "2024-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "luozhiya",
+      "avatar_url": "https://avatars.githubusercontent.com/u/90168447?u=ba262334c0234769ae24a0c6cffc97aec5a31597&v=4",
+      "html_url": "https://github.com/luozhiya",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2026-01": 1
+      },
+      "comment_monthly": {
+        "2026-01": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "noahmbright",
+      "avatar_url": "https://avatars.githubusercontent.com/u/69115110?u=e7bbabd254a8dfc5a9b0b75848b63a5617bfa22d&v=4",
+      "html_url": "https://github.com/noahmbright",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2024-09": 1
+      },
+      "comment_monthly": {
+        "2024-09": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "pavpanchekha",
+      "avatar_url": "https://avatars.githubusercontent.com/u/30707?u=16ee1e8cde2aafd657d8c051c51da1481dea679f&v=4",
+      "html_url": "https://github.com/pavpanchekha",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2024-06": 1
+      },
+      "comment_monthly": {
+        "2024-06": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "theIDinside",
+      "avatar_url": "https://avatars.githubusercontent.com/u/25328813?u=839533fcdafbe3e12e31ef6fe21dc1cf63d30212&v=4",
+      "html_url": "https://github.com/theIDinside",
+      "total": 1,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {
+        "2025-04": 1
+      },
+      "comment_monthly": {
+        "2025-04": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 1,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 1,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "xnacly",
+      "avatar_url": "https://avatars.githubusercontent.com/u/47723417?u=641596c51b7adf4b5afd23a83ed1498757faa444&v=4",
+      "html_url": "https://github.com/xnacly",
+      "total": 0,
+      "total_comments": 2,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-06": 1,
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 2
+        }
+      }
+    },
+    {
+      "login": "IntegralPilot",
+      "avatar_url": "https://avatars.githubusercontent.com/u/109999292?u=4ad66ae07c71a58bffb67212ce81a652ab58537a&v=4",
+      "html_url": "https://github.com/IntegralPilot",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "LalitSinghRana",
+      "avatar_url": "https://avatars.githubusercontent.com/u/31415645?u=5b5a357835c150601680b488169bad92be94d199&v=4",
+      "html_url": "https://github.com/LalitSinghRana",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "MrBrain295",
+      "avatar_url": "https://avatars.githubusercontent.com/u/66077254?u=538508d9317997ead43792ced52c3baeb9a739fe&v=4",
+      "html_url": "https://github.com/MrBrain295",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2025-05": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "Olekoop",
+      "avatar_url": "https://avatars.githubusercontent.com/u/154007291?v=4",
+      "html_url": "https://github.com/Olekoop",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2025-08": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "dan-v",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1596016?v=4",
+      "html_url": "https://github.com/dan-v",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2025-07": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "me-it-is",
+      "avatar_url": "https://avatars.githubusercontent.com/u/188520719?v=4",
+      "html_url": "https://github.com/me-it-is",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2026-02": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "veeti",
+      "avatar_url": "https://avatars.githubusercontent.com/u/124223?u=39f00af1f7cf8a2f9124c303b8c701d8a0cba161&v=4",
+      "html_url": "https://github.com/veeti",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2025-05": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "xlmnxp",
+      "avatar_url": "https://avatars.githubusercontent.com/u/20779154?u=aaaf7ce25e78e18705599d61b0a321eeacdf4f8d&v=4",
+      "html_url": "https://github.com/xlmnxp",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2024-06": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    },
+    {
+      "login": "zacoons",
+      "avatar_url": "https://avatars.githubusercontent.com/u/73414084?u=9088d231f684a5a9ee34a54720bbcb800aa93a97&v=4",
+      "html_url": "https://github.com/zacoons",
+      "total": 0,
+      "total_comments": 1,
+      "total_merges": 0,
+      "monthly": {},
+      "comment_monthly": {
+        "2025-08": 1
+      },
+      "merge_monthly": {},
+      "period_counts": {
+        "1": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "3": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "6": {
+          "reviewed": 0,
+          "commented": 0
+        },
+        "12": {
+          "reviewed": 0,
+          "commented": 1
+        },
+        "24": {
+          "reviewed": 0,
+          "commented": 1
+        }
+      }
+    }
+  ],
+  "monthly_totals": {
+    "2024-06": 89,
+    "2024-07": 197,
+    "2024-08": 127,
+    "2024-09": 99,
+    "2024-10": 256,
+    "2024-11": 264,
+    "2024-12": 222,
+    "2025-01": 171,
+    "2025-02": 161,
+    "2025-03": 172,
+    "2025-04": 150,
+    "2025-05": 190,
+    "2025-06": 208,
+    "2025-07": 284,
+    "2025-08": 221,
+    "2025-09": 187,
+    "2025-10": 182,
+    "2025-11": 189,
+    "2025-12": 126,
+    "2026-01": 218,
+    "2026-02": 239
+  },
+  "comment_monthly_totals": {
+    "2024-06": 151,
+    "2024-07": 301,
+    "2024-08": 176,
+    "2024-09": 154,
+    "2024-10": 343,
+    "2024-11": 374,
+    "2024-12": 319,
+    "2025-01": 203,
+    "2025-02": 197,
+    "2025-03": 246,
+    "2025-04": 181,
+    "2025-05": 244,
+    "2025-06": 240,
+    "2025-07": 331,
+    "2025-08": 254,
+    "2025-09": 226,
+    "2025-10": 230,
+    "2025-11": 211,
+    "2025-12": 160,
+    "2026-01": 259,
+    "2026-02": 283
+  },
+  "merge_monthly_totals": {
+    "2024-05": 7,
+    "2024-06": 167,
+    "2024-07": 305,
+    "2024-08": 168,
+    "2024-09": 168,
+    "2024-10": 312,
+    "2024-11": 351,
+    "2024-12": 235,
+    "2025-01": 204,
+    "2025-02": 171,
+    "2025-03": 193,
+    "2025-04": 161,
+    "2025-05": 180,
+    "2025-06": 175,
+    "2025-07": 257,
+    "2025-08": 191,
+    "2025-09": 175,
+    "2025-10": 150,
+    "2025-11": 155,
+    "2025-12": 132,
+    "2026-01": 194,
+    "2026-02": 223
+  },
+  "repo_totals": {
+    "all": {
+      "reviewed": 2720,
+      "commented": 3608,
+      "merged": 5849
+    },
+    "1": {
+      "reviewed": 219,
+      "commented": 310,
+      "merged": 392
+    },
+    "3": {
+      "reviewed": 486,
+      "commented": 650,
+      "merged": 928
+    },
+    "6": {
+      "reviewed": 894,
+      "commented": 1103,
+      "merged": 1568
+    },
+    "12": {
+      "reviewed": 1789,
+      "commented": 2064,
+      "merged": 3212
+    },
+    "24": {
+      "reviewed": 2720,
+      "commented": 3608,
+      "merged": 5849
+    }
+  }
+};</script>
+  <script>/* Reviewers page — Chart.js rendering and DOM logic */
+
+(function () {
+  "use strict";
+
+  var CHART_COLOR = "rgb(31, 111, 200)";
+  var CHART_BG = "rgba(31, 111, 200, 0.15)";
+
+  var currentPeriod = "12";
+  var overviewChart = null;
+  var sparklineCharts = {};
+
+  // -- Helpers -------------------------------------------------------
+
+  function periodDateFilter(period) {
+    if (period === "all") return "";
+    var months = parseInt(period, 10);
+    if (!months) return "";
+    var now = new Date();
+    var y = now.getFullYear();
+    var m = now.getMonth() + 1 - months;
+    while (m < 1) { m += 12; y--; }
+    var maxDay = new Date(y, m, 0).getDate();
+    var d = Math.min(now.getDate(), maxDay);
+    return "+updated%3A>%3D" + y + "-" +
+      String(m).padStart(2, "0") + "-" +
+      String(d).padStart(2, "0");
+  }
+
+  function filterMonthlyByPeriod(monthly, period) {
+    if (period === "all") return monthly;
+
+    var months = parseInt(period, 10);
+    if (!months) return monthly;
+
+    var now = new Date();
+    var cutoff = new Date(now.getFullYear(), now.getMonth() - months, 1);
+
+    var cutoffStr =
+      cutoff.getFullYear() +
+      "-" +
+      String(cutoff.getMonth() + 1).padStart(2, "0");
+    var filtered = {};
+    for (var month in monthly) {
+      if (monthly.hasOwnProperty(month) && month >= cutoffStr) {
+        filtered[month] = monthly[month];
+      }
+    }
+    return filtered;
+  }
+
+  function buildDenseMonths(sparseMonthly) {
+    var months = Object.keys(sparseMonthly).sort();
+    if (months.length === 0) return { labels: [], values: [] };
+
+    var labels = [];
+    var values = [];
+
+    var parts = months[0].split("-");
+    var year = parseInt(parts[0], 10);
+    var month = parseInt(parts[1], 10);
+
+    var endParts = months[months.length - 1].split("-");
+    var endYear = parseInt(endParts[0], 10);
+    var endMonth = parseInt(endParts[1], 10);
+
+    while (year < endYear || (year === endYear && month <= endMonth)) {
+      var key = year + "-" + String(month).padStart(2, "0");
+      labels.push(key);
+      values.push(sparseMonthly[key] || 0);
+      month++;
+      if (month > 12) {
+        month = 1;
+        year++;
+      }
+    }
+
+    return { labels: labels, values: values };
+  }
+
+  function formatMonth(yearMonth) {
+    var parts = yearMonth.split("-");
+    var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
+    return d.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+    });
+  }
+
+  function formatDate(isoStr) {
+    var d = new Date(isoStr);
+    return d.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  function formatNumber(n) {
+    return String(n);
+  }
+
+  function mergeMonthly(a, b) {
+    var merged = {};
+    var key;
+    for (key in a) {
+      if (a.hasOwnProperty(key)) {
+        merged[key] = (merged[key] || 0) + a[key];
+      }
+    }
+    for (key in b) {
+      if (b.hasOwnProperty(key)) {
+        merged[key] = (merged[key] || 0) + b[key];
+      }
+    }
+    return merged;
+  }
+
+  function sumMonthly(monthly) {
+    var total = 0;
+    for (var key in monthly) {
+      if (monthly.hasOwnProperty(key)) total += monthly[key];
+    }
+    return total;
+  }
+
+  // -- Overview chart -------------------------------------------------
+
+  function renderOverviewChart() {
+    var reviewMonthly = filterMonthlyByPeriod(DATA.monthly_totals, currentPeriod);
+    var commentMonthly = filterMonthlyByPeriod(DATA.comment_monthly_totals || {}, currentPeriod);
+    var mergeMonthlyData = filterMonthlyByPeriod(DATA.merge_monthly_totals || {}, currentPeriod);
+    var combined = mergeMonthly(mergeMonthly(reviewMonthly, commentMonthly), mergeMonthlyData);
+    var dense = buildDenseMonths(combined);
+
+    var ctx = document.getElementById("overview-chart").getContext("2d");
+
+    if (overviewChart) {
+      overviewChart.destroy();
+    }
+
+    overviewChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: dense.labels,
+        datasets: [
+          {
+            data: dense.values,
+            borderColor: CHART_COLOR,
+            backgroundColor: CHART_BG,
+            borderWidth: 2,
+            fill: "origin",
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHoverBackgroundColor: CHART_COLOR,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: "index" },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: function (items) {
+                return formatMonth(items[0].label);
+              },
+              afterBody: function (items) {
+                var month = items[0].label;
+                var reviews = reviewMonthly[month] || 0;
+                var comments = commentMonthly[month] || 0;
+                var merges = mergeMonthlyData[month] || 0;
+                return formatNumber(reviews) + " reviewed, " + formatNumber(comments) + " commented on, " + formatNumber(merges) + " merged";
+              },
+              label: function (ctx) {
+                return formatNumber(ctx.parsed.y) + " total PR events";
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            display: true,
+            grid: { display: false },
+            ticks: {
+              maxTicksLimit: 12,
+              maxRotation: 0,
+              callback: function (val) {
+                return formatMonth(this.getLabelForValue(val));
+              },
+            },
+          },
+          y: {
+            display: true,
+            beginAtZero: true,
+            grid: { color: "rgba(0, 0, 0, 0.06)" },
+            border: { display: false },
+            ticks: { maxTicksLimit: 5 },
+          },
+        },
+        layout: { padding: { top: 4, right: 4, bottom: 0, left: 0 } },
+      },
+    });
+  }
+
+  // -- Sparkline chart ------------------------------------------------
+
+  function createSparkline(canvasId, sparseMonthly) {
+    var monthly = filterMonthlyByPeriod(sparseMonthly, currentPeriod);
+    var dense = buildDenseMonths(monthly);
+
+    var ctx = document.getElementById(canvasId).getContext("2d");
+
+    return new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: dense.labels,
+        datasets: [
+          {
+            data: dense.values,
+            borderColor: CHART_COLOR,
+            backgroundColor: CHART_BG,
+            borderWidth: 1.5,
+            fill: "origin",
+            tension: 0.3,
+            pointRadius: 0,
+            pointHitRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: false },
+        },
+        scales: {
+          x: { display: false },
+          y: { display: false, beginAtZero: true },
+        },
+        layout: { padding: 0 },
+      },
+    });
+  }
+
+  // -- Reviewer cards -------------------------------------------------
+
+  function createReviewerCard(reviewer, index, rank, filteredTotal, filteredComments, filteredMerges) {
+    var card = document.createElement("div");
+    card.className = "reviewer-card";
+
+    var canvasId = "spark-" + index;
+
+    card.innerHTML =
+      '<div class="reviewer-header">' +
+      '<img class="reviewer-avatar" src="' +
+      reviewer.avatar_url +
+      '" alt="' +
+      reviewer.login +
+      '" loading="lazy">' +
+      '<div class="reviewer-info">' +
+      '<a class="reviewer-login" href="' +
+      reviewer.html_url +
+      '">' +
+      reviewer.login +
+      "</a>" +
+      '<div class="reviewer-stats">' +
+      '<a href="https://github.com/' + DATA.repo + '/pulls?q=is%3Apr+reviewed-by%3A' + reviewer.login + '+-author%3A' + reviewer.login + periodDateFilter(currentPeriod) + '">' +
+      formatNumber(filteredTotal) +
+      " PRs reviewed</a> | " +
+      '<a href="https://github.com/' + DATA.repo + '/pulls?q=is%3Apr+commenter%3A' + reviewer.login + '+-author%3A' + reviewer.login + periodDateFilter(currentPeriod) + '">' +
+      formatNumber(filteredComments) +
+      " commented on</a> | " +
+      formatNumber(filteredMerges) +
+      " merged</div>" +
+      "</div>" +
+      '<span class="reviewer-rank">#' + rank + "</span>" +
+      "</div>" +
+      '<div class="reviewer-chart-container">' +
+      '<canvas id="' +
+      canvasId +
+      '"></canvas>' +
+      "</div>";
+
+    return { card: card, canvasId: canvasId };
+  }
+
+  function renderReviewerCards() {
+    var grid = document.getElementById("reviewers-grid");
+    grid.innerHTML = "";
+
+    // Destroy old sparklines
+    for (var id in sparklineCharts) {
+      if (sparklineCharts.hasOwnProperty(id)) {
+        sparklineCharts[id].destroy();
+      }
+    }
+    sparklineCharts = {};
+
+    var entries = DATA.reviewers.map(function (reviewer) {
+      var pc = reviewer.period_counts && currentPeriod !== "all" && reviewer.period_counts[currentPeriod];
+      var filteredTotal = pc ? pc.reviewed
+        : currentPeriod === "all" ? reviewer.total
+        : sumMonthly(filterMonthlyByPeriod(reviewer.monthly, currentPeriod));
+      var filteredComments = pc ? pc.commented
+        : currentPeriod === "all" ? reviewer.total_comments
+        : sumMonthly(filterMonthlyByPeriod(reviewer.comment_monthly || {}, currentPeriod));
+      var filteredMerges = sumMonthly(
+        filterMonthlyByPeriod(reviewer.merge_monthly || {}, currentPeriod));
+      return {
+        reviewer: reviewer,
+        filteredTotal: filteredTotal,
+        filteredComments: filteredComments,
+        filteredMerges: filteredMerges,
+        combined: filteredTotal + filteredComments + filteredMerges,
+      };
+    });
+
+    entries = entries.filter(function (e) { return e.combined > 0; });
+    entries.sort(function (a, b) { return b.combined - a.combined; });
+
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      var result = createReviewerCard(e.reviewer, i, String(i + 1), e.filteredTotal, e.filteredComments, e.filteredMerges);
+      grid.appendChild(result.card);
+      var sparkMonthly = mergeMonthly(
+        mergeMonthly(e.reviewer.monthly, e.reviewer.comment_monthly || {}),
+        e.reviewer.merge_monthly || {}
+      );
+      sparklineCharts[result.canvasId] = createSparkline(
+        result.canvasId,
+        sparkMonthly
+      );
+    }
+  }
+
+  // -- Init -----------------------------------------------------------
+
+  function updateSummary() {
+    var activeCount = 0;
+    for (var i = 0; i < DATA.reviewers.length; i++) {
+      var r = DATA.reviewers[i];
+      var pc = r.period_counts && currentPeriod !== "all" && r.period_counts[currentPeriod];
+      var rev = pc ? pc.reviewed
+        : currentPeriod === "all" ? r.total
+        : sumMonthly(filterMonthlyByPeriod(r.monthly, currentPeriod));
+      var com = pc ? pc.commented
+        : currentPeriod === "all" ? r.total_comments
+        : sumMonthly(filterMonthlyByPeriod(r.comment_monthly || {}, currentPeriod));
+      var mer = sumMonthly(filterMonthlyByPeriod(r.merge_monthly || {}, currentPeriod));
+      if (rev + com + mer > 0) activeCount++;
+    }
+    var t = ((DATA.repo_totals || {})[currentPeriod]) || {};
+    document.getElementById("summary").textContent =
+      formatNumber(activeCount) +
+      " reviewers \u00b7 " +
+      formatNumber(t.reviewed || 0) +
+      " PRs reviewed \u00b7 " +
+      formatNumber(t.commented || 0) +
+      " PRs commented on \u00b7 " +
+      formatNumber(t.merged || 0) +
+      " PRs merged";
+  }
+
+  function init() {
+    document.getElementById("repo-name").textContent = DATA.repo;
+    document.title = "Reviewers of " + DATA.repo;
+    document.getElementById("generated-at").textContent = formatDate(
+      DATA.generated_at
+    );
+
+    updateSummary();
+    renderOverviewChart();
+    renderReviewerCards();
+
+    document.getElementById("period-select").addEventListener("change", function (e) {
+      currentPeriod = e.target.value;
+      updateSummary();
+      renderOverviewChart();
+      renderReviewerCards();
+    });
+
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
