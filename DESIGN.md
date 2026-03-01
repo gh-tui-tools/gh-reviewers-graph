@@ -276,7 +276,7 @@ class _ScrapeRateLimiter:
             self._next_time = time.monotonic() + self._min_interval
 ```
 
-`SCRAPE_MAX_RPS = 4`  — GitHub allows approximately 500 requests/minute (~8.3/s), but secondary rate limits share a budget with the GraphQL API. The early-exit gate keeps total request counts low enough that 4 req/s avoids 429s in practice.
+`SCRAPE_MAX_RPS = 4` — the default rate for small scrape jobs (10 or fewer unsearchable users). For large jobs (>10 users), the rate drops to 2 req/s and worker count drops to 1 (see “IP-based rate limits on Actions runners” below).
 
 ### `_scrape_search_count(url)`
 
@@ -294,13 +294,26 @@ Orchestrates scraping for unsearchable users with early-exit gating:
 2. **Gate check**: Users with zero reviewed AND zero commented in 24 months get all shorter periods set to 0 without further scraping
 3. **Detail phase**: Scrape remaining periods ("1", "3", "6", "12") only for users that passed the gate (M × 4 × 2 requests, where M ≤ N)
 
-Uses `ThreadPoolExecutor` with up to 10 workers, rate-limited to `SCRAPE_MAX_RPS`. This keeps total requests low — many unsearchable users are PR authors/mergers with zero review/comment activity, so the gate filters them out after just 2 requests each.
+Uses `ThreadPoolExecutor` rate-limited via `_ScrapeRateLimiter`. For small jobs (≤10 unsearchable users), up to 10 workers at 4 req/s. For large jobs (>10 users), 1 worker at 2 req/s to avoid IP-based 429 cascades on GitHub Actions runners (see below). The early-exit gate keeps total requests low — many unsearchable users are PR authors/mergers with zero review/comment activity, so the gate filters them out after just 2 requests each.
 
 ### Why not full web scraping?
 
 Full scraping for all users would require 1,000 requests (100 users × 5 periods × 2 metrics) at 4 req/s = ~250 seconds. The hybrid approach is much faster because GraphQL batching handles the vast majority of users in ~3 seconds, and scraping is limited to the small number of private-activity users who have real monthly activity (typically just a handful per repo).
 
-Web scraping doesn’t consume API rate limit quota, but is constrained by GitHub’s secondary rate limits (abuse detection).
+Web scraping doesn’t consume API rate limit quota, but is constrained by GitHub’s IP-based rate limits on Actions runners (see below).
+
+### IP-based rate limits on Actions runners
+
+GitHub Actions runner IPs face strict IP-based rate limits for unauthenticated web requests — much stricter than limits applied to residential or cloud IPs. Testing confirmed that `github.com` ignores `Authorization: token` headers (it authenticates via session cookies, not API tokens), so scrape requests are always unauthenticated regardless of `GH_TOKEN`.
+
+Empirical data from CI runs:
+
+- ~50 total requests triggers the rate limit regardless of pace
+- `Retry-After: 60` in all 429 responses
+- 100 rapid-fire requests from a local machine: zero 429s (IP-specific)
+- With 10 concurrent workers, all threads hit 429 simultaneously, wait 60 s, then retry in a burst — causing cascading 429s that never converge
+
+The fix uses single-threaded scraping for large jobs (>10 unsearchable users). With 1 worker, each 429 is followed by one retry (not ten), and the retry succeeds because the rate limit has reset during the 60 s wait. A typical large job (e.g., denoland/deno with 55 unsearchable users, 110 gate pages) completes in ~3 minutes: two ~25 s bursts separated by a 60 s 429 wait.
 
 ## Concurrency
 
@@ -515,6 +528,10 @@ The reset target is cached in a module-level variable protected by `threading.Lo
 
 Up to 5 retries with exponential backoff: wait `min(2^retry, 30)` seconds. The 30-second cap prevents excessive delays. After exhausting retries, a `RuntimeError` is raised.
 
+### Network timeout retry
+
+If `gh api graphql` fails with stderr containing “timeout” or “dial tcp” (common on GitHub Actions runners under load), the request is retried up to 5 times with the same exponential backoff schedule.
+
 ### OS error retry
 
 `OSError` (which covers `FileNotFoundError` if `gh` is not installed) is caught and retried up to 5 times with the same exponential backoff schedule. After exhausting retries, the exception is re-raised.
@@ -683,10 +700,10 @@ Since the main script has no `.py` extension, tests use `importlib.machinery.Sou
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| `test_graphql.py` | 17 | `_graphql_request()`: subprocess success, errors, retries, rate limits, variable passing |
+| `test_graphql.py` | 19 | `_graphql_request()`: subprocess success, errors, retries, rate limits, variable passing |
 | `test_cli.py` | 6 | Argument parsing: defaults, validation, `--exclude` default and parsing |
 | `test_main.py` | 16 | Integration: cache hit, stale cache, refresh, no cache, output summary; incremental update: existing/new/frozen reviewers, historical backfill, period_counts flow; activity-check: full skip (with period_counts), full skip fallback (repo_totals), skip discovery, skip merges, backward compat |
-| `test_fetch.py` | 38 | Fetch functions: avatars, discovery, merge counts, monthly counts, repo activity, reviewer period counts, scrape fallback |
+| `test_fetch.py` | 40 | Fetch functions: avatars, discovery, merge counts, monthly counts, repo activity, reviewer period counts, scrape fallback |
 | `test_aggregation.py` | 8 | `build_output_data()`: sorting, totals, empty input, inactive filtering, comment-only users, merge-only users, period_counts attachment |
 | `test_bot_filter.py` | 7 | `is_bot()`: GitHub App bots, project bots, human logins, case insensitivity, `KNOWN_BOTS` entries, `--exclude` separation |
 | `test_cache.py` | 11 | Cache I/O: round-trip, missing files, directory creation, v1—v7 staleness guards, v8 backward compat (no activity key) |
@@ -695,4 +712,4 @@ Since the main script has no `.py` extension, tests use `importlib.machinery.Sou
 | `test_rate_limit.py` | 16 | Rate limit: info parsing, budget estimation (fresh + incremental), budget check output, countdown timer (with cached target reuse, fallback, too-far guard) |
 | `test_schema.py` | 9 | JSON Schema validation: sample data, minimal valid, empty reviewers, wrong version rejected, missing/extra fields rejected, bad month format, invalid period keys |
 
-Total: 136 unit tests + 18 e2e tests, 99.4% coverage (99% minimum enforced).
+Total: 140 unit tests + 18 e2e tests, 99.6% coverage (99% minimum enforced).

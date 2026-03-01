@@ -923,3 +923,46 @@ def test_scrape_unsearchable_no_unsearchable(mock_scrape, mock_sleep):
     }
     reviewers.scrape_unsearchable_period_counts("o", "r", period_counts, reviewers_data)
     mock_scrape.assert_not_called()
+
+
+@patch("time.sleep")
+@patch.object(reviewers, "_scrape_search_count")
+def test_scrape_fallback_throttles_large_jobs(mock_scrape, mock_sleep):
+    """Large login lists use a slower scrape rate to avoid IP-based 429s."""
+    # 12 logins > 10 threshold -> effective_rps should be 2 (not 4)
+    logins = [f"user{i}" for i in range(12)]
+    results = {login: {} for login in logins}
+    periods = [
+        ("1", " updated:>=2025-03-01"),
+        ("24", " updated:>=2024-03-01"),
+    ]
+    # Return 0 for everything (all users fail gate -> fast path)
+    mock_scrape.return_value = 0
+
+    with patch.object(reviewers, "_ScrapeRateLimiter") as mock_rl_cls:
+        mock_rl_instance = mock_rl_cls.return_value
+        mock_rl_instance.wait = lambda: None
+        reviewers._scrape_fallback_period_counts("o", "r", logins, results, periods)
+
+    # Rate limiter should have been created with 2 (not SCRAPE_MAX_RPS=4)
+    mock_rl_cls.assert_called_once_with(2)
+
+
+@patch("time.sleep")
+@patch.object(reviewers, "_scrape_search_count")
+def test_scrape_fallback_uses_full_rate_for_small_jobs(mock_scrape, mock_sleep):
+    """Small login lists use the default SCRAPE_MAX_RPS."""
+    logins = ["alice", "bob"]
+    results = {login: {} for login in logins}
+    periods = [
+        ("1", " updated:>=2025-03-01"),
+        ("24", " updated:>=2024-03-01"),
+    ]
+    mock_scrape.return_value = 0
+
+    with patch.object(reviewers, "_ScrapeRateLimiter") as mock_rl_cls:
+        mock_rl_instance = mock_rl_cls.return_value
+        mock_rl_instance.wait = lambda: None
+        reviewers._scrape_fallback_period_counts("o", "r", logins, results, periods)
+
+    mock_rl_cls.assert_called_once_with(reviewers.SCRAPE_MAX_RPS)
