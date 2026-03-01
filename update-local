@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Restore cached data from gh-pages into repos/, then re-run
+# gh-reviewers-graph on every repo found there.
+
+cd "$(dirname "$0")"
+
+git fetch origin gh-pages:gh-pages 2>/dev/null || true
+if git rev-parse --verify gh-pages >/dev/null 2>&1; then
+  mkdir -p repos
+  git --work-tree=repos checkout gh-pages -- .
+else
+  echo "No gh-pages branch found." >&2
+  exit 1
+fi
+
+for dir in repos/*/*/; do
+  repo="${dir#repos/}"
+  repo="${repo%/}"
+  [ -z "$repo" ] && continue
+  echo "=== $repo ==="
+  ./gh-reviewers-graph --no-open "$repo"
+  sleep 5
+done
